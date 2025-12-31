@@ -87,4 +87,5 @@ logs/
 
 gen-lang-client-0314670670-f9414eb2037a.json
 *.png
+data/
 ocr_output.txt
