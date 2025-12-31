@@ -1,0 +1,158 @@
+"""
+Pydantic models for API request/response schemas.
+"""
+from typing import Optional, List
+from pydantic import BaseModel, Field
+
+
+class VerifyRequest(BaseModel):
+    """Request model for the /verify endpoint."""
+    id_number: str = Field(
+        ..., 
+        description="ID number to search for in the database"
+    )
+    selfie_path: Optional[str] = Field(
+        None, 
+        description="Path to the selfie image file"
+    )
+    selfie_base64: Optional[str] = Field(
+        None, 
+        description="Base64 encoded selfie image"
+    )
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "id_number": "123456789012",
+                "selfie_path": "data/selfies/sample_01.png"
+            }
+        }
+
+
+class OCRResult(BaseModel):
+    """Result of OCR extraction from ID card."""
+    extracted_id: Optional[str] = Field(
+        None, 
+        description="Extracted unique ID number"
+    )
+    id_type: Optional[str] = Field(
+        None, 
+        description="Detected ID type (aadhaar, pan, yemen_id, etc.)"
+    )
+    confidence: float = Field(
+        0.0, 
+        description="OCR confidence score"
+    )
+    all_texts: List[str] = Field(
+        default_factory=list, 
+        description="All text extracted by OCR"
+    )
+
+
+class FaceMatchResult(BaseModel):
+    """Result of face comparison."""
+    similarity_score: float = Field(
+        ..., 
+        description="Cosine similarity between faces (0.0 to 1.0)"
+    )
+    id_card_face_detected: bool = Field(
+        ..., 
+        description="Whether a face was detected in ID card"
+    )
+    selfie_face_detected: bool = Field(
+        ..., 
+        description="Whether a face was detected in selfie"
+    )
+
+
+class VerifyResponse(BaseModel):
+    """Response model for the /verify endpoint."""
+    success: bool = Field(
+        ..., 
+        description="Whether the verification process completed successfully"
+    )
+    extracted_id: Optional[str] = Field(
+        None, 
+        description="Extracted unique ID number from the ID card"
+    )
+    id_type: Optional[str] = Field(
+        None, 
+        description="Detected type of ID card"
+    )
+    similarity_score: Optional[float] = Field(
+        None, 
+        description="Face similarity score (0.0 to 1.0)"
+    )
+    error: Optional[str] = Field(
+        None, 
+        description="Error message if verification failed"
+    )
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "success": True,
+                "extracted_id": "123456789012",
+                "id_type": "aadhaar",
+                "similarity_score": 0.85,
+                "error": None
+            }
+        }
+
+
+class ExtractIDRequest(BaseModel):
+    """Request model for the /extract-id endpoint."""
+    image_path: Optional[str] = Field(
+        None, 
+        description="Path to the ID card image"
+    )
+    image_base64: Optional[str] = Field(
+        None, 
+        description="Base64 encoded ID card image"
+    )
+
+
+class ExtractIDResponse(BaseModel):
+    """Response model for the /extract-id endpoint."""
+    success: bool
+    ocr_result: Optional[OCRResult] = None
+    error: Optional[str] = None
+
+
+class CompareFacesRequest(BaseModel):
+    """Request model for the /compare-faces endpoint."""
+    image1_path: Optional[str] = None
+    image2_path: Optional[str] = None
+    image1_base64: Optional[str] = None
+    image2_base64: Optional[str] = None
+
+
+class CompareFacesResponse(BaseModel):
+    """Response model for the /compare-faces endpoint."""
+    success: bool
+    similarity_score: Optional[float] = None
+    error: Optional[str] = None
+
+
+class BatchProcessRequest(BaseModel):
+    """Request for batch processing ID cards."""
+    id_cards_directory: str = Field(
+        ..., 
+        description="Directory containing ID card images"
+    )
+
+
+class BatchProcessResponse(BaseModel):
+    """Response for batch processing."""
+    success: bool
+    processed_count: int = 0
+    failed_count: int = 0
+    results: List[dict] = Field(default_factory=list)
+    errors: List[str] = Field(default_factory=list)
+
+
+class HealthResponse(BaseModel):
+    """Health check response."""
+    status: str = "ok"
+    ocr_ready: bool = False
+    face_recognition_ready: bool = False
