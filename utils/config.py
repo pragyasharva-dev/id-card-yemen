@@ -58,7 +58,7 @@ ID_PATTERNS = {
 
 # OCR Settings
 OCR_LANGUAGE = "en"  # Changed from 'ar' for Indian IDs
-OCR_CONFIDENCE_THRESHOLD = 0.5
+OCR_CONFIDENCE_THRESHOLD = 0.6
 
 # Face Recognition Settings
 FACE_DETECTION_MODEL = "buffalo_l"  # InsightFace model
