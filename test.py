@@ -69,4 +69,4 @@ def ocr_image_to_text_file(image_path: str, output_txt="ocr_output.txt"):
 
 
 if __name__ == "__main__":
-    ocr_image_to_text_file("retrieve (1).png")
+    ocr_image_to_text_file("retrieve (4).png")
