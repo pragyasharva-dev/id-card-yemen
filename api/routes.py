@@ -211,7 +211,10 @@ async def extract_id_endpoint(
                 extracted_id=result.get("extracted_id"),
                 id_type=result.get("id_type"),
                 confidence=result.get("confidence", 0.0),
-                all_texts=result.get("all_texts", [])
+                all_texts=result.get("all_texts", []),
+                text_results=result.get("text_results", []),
+                detected_languages=result.get("detected_languages", []),
+                detected_languages_display=result.get("detected_languages_display", [])
             ),
             error=None
         )

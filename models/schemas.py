@@ -29,6 +29,14 @@ class VerifyRequest(BaseModel):
         }
 
 
+class TextResult(BaseModel):
+    """Individual text result with language detection."""
+    text: str = Field(..., description="Extracted text")
+    score: float = Field(0.0, description="OCR confidence score")
+    detected_language: str = Field("en", description="Detected language code")
+    detected_language_display: str = Field("English 🇬🇧", description="Language name with flag")
+
+
 class OCRResult(BaseModel):
     """Result of OCR extraction from ID card."""
     extracted_id: Optional[str] = Field(
@@ -46,6 +54,18 @@ class OCRResult(BaseModel):
     all_texts: List[str] = Field(
         default_factory=list, 
         description="All text extracted by OCR"
+    )
+    text_results: List[TextResult] = Field(
+        default_factory=list,
+        description="Detailed text results with per-text language detection"
+    )
+    detected_languages: List[str] = Field(
+        default_factory=list,
+        description="List of detected language codes"
+    )
+    detected_languages_display: List[str] = Field(
+        default_factory=list,
+        description="List of detected languages with names and flags"
     )
 
 
