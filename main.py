@@ -10,9 +10,12 @@ Usage:
 Then access the API documentation at http://localhost:8000/docs
 """
 import logging
+from pathlib import Path
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 
 # Configure logging
 logging.basicConfig(
@@ -96,10 +99,20 @@ app.add_middleware(
 from api.routes import router
 app.include_router(router, tags=["e-KYC"])
 
+# Serve static files
+static_dir = Path(__file__).parent / "static"
+app.mount("/static", StaticFiles(directory=static_dir), name="static")
+
 
 @app.get("/")
 async def root():
-    """Root endpoint with API information."""
+    """Serve the frontend page."""
+    return FileResponse(static_dir / "index.html")
+
+
+@app.get("/api")
+async def api_info():
+    """API information endpoint."""
     return {
         "name": "e-KYC Verification API",
         "version": "0.1.0",

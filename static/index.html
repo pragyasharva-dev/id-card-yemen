@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>e-KYC Verification</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+
+<body>
+    <div class="container">
+        <header>
+            <h1>e-KYC</h1>
+            <p class="subtitle">Identity Verification</p>
+        </header>
+
+        <main>
+            <!-- OCR Section - Side by Side -->
+            <section class="card">
+                <h2>ID Card OCR</h2>
+                <div class="side-by-side">
+                    <!-- Left: Image Upload -->
+                    <div class="side-panel">
+                        <div class="upload-area" id="id-upload-area">
+                            <input type="file" id="id-card-input" accept="image/*" hidden>
+                            <div class="upload-content" id="upload-prompt">
+                                <span class="upload-icon">📄</span>
+                                <p>Drop ID card or click to upload</p>
+                            </div>
+                            <img id="id-preview" class="preview-full hidden" alt="ID Card Preview">
+                        </div>
+                        <button id="extract-btn" class="btn" disabled>Extract ID</button>
+                    </div>
+
+                    <!-- Right: OCR Results -->
+                    <div class="side-panel">
+                        <div class="results-box" id="results-content">
+                            <p class="placeholder">Upload an ID card to see OCR results</p>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- e-KYC Face Verification Section -->
+            <section class="card" id="ekyc-section">
+                <h2>e-KYC Face Verification</h2>
+                <div class="ekyc-content">
+                    <div class="selfie-upload">
+                        <div class="upload-area small" id="selfie-upload-area">
+                            <input type="file" id="selfie-input" accept="image/*" hidden>
+                            <div class="upload-content" id="selfie-prompt">
+                                <span class="upload-icon">🤳</span>
+                                <p>Upload selfie</p>
+                            </div>
+                            <img id="selfie-preview" class="preview-full hidden" alt="Selfie Preview">
+                        </div>
+                    </div>
+                    <div class="verify-action">
+                        <button id="verify-btn" class="btn" disabled>Verify Face Match</button>
+                        <div id="verify-results"></div>
+                    </div>
+                </div>
+            </section>
+        </main>
+
+        <footer>
+            <p>Powered by PaddleOCR & InsightFace</p>
+        </footer>
+    </div>
+
+    <div id="loading" class="hidden">
+        <div class="spinner"></div>
+    </div>
+
+    <script src="/static/script.js"></script>
+</body>
+
+</html>
