@@ -58,14 +58,14 @@ async def health_check():
 
 @router.post("/verify", response_model=VerifyResponse)
 async def verify_identity_endpoint(
-    id_number: str = Form(..., description="ID number to search for in the database"),
+    id_card: UploadFile = File(..., description="ID card image file (front side)"),
     selfie: UploadFile = File(..., description="Selfie image file")
 ):
     """
-    e-KYC verification endpoint with ID lookup.
+    e-KYC verification endpoint with direct face comparison.
     
-    1. Searches ID cards database for matching ID number using OCR
-    2. Once found, extracts face from ID card
+    1. Receives ID card image directly (no database search)
+    2. Extracts face from ID card
     3. Compares with selfie face
     4. Returns similarity score
     
@@ -73,45 +73,29 @@ async def verify_identity_endpoint(
     higher values indicate higher likelihood of same person.
     """
     try:
-        # Import here to avoid circular imports
-        from services.id_database import search_id_card_by_number
-        
-        # Load selfie image
+        # Load both images directly
+        id_card_bytes = await id_card.read()
         selfie_bytes = await selfie.read()
+        
+        id_card_image = load_image(id_card_bytes)
         selfie_image = load_image(selfie_bytes)
         
-        # Step 1: Search for ID card in database
-        search_result = search_id_card_by_number(id_number)
-        
-        if search_result is None:
-            return VerifyResponse(
-                success=False,
-                extracted_id=id_number,
-                id_type=None,
-                similarity_score=None,
-                error=f"ID card with number '{id_number}' not found in database"
-            )
-        
-        card_path, id_card_image, ocr_result = search_result
-        extracted_id = ocr_result.get("extracted_id")
-        id_type = ocr_result.get("id_type")
-        
-        # Step 2: Face verification
+        # Direct face verification - no database search needed
         face_result = verify_identity(id_card_image, selfie_image)
         
         if face_result.get("error"):
             return VerifyResponse(
                 success=False,
-                extracted_id=extracted_id,
-                id_type=id_type,
+                extracted_id=None,
+                id_type=None,
                 similarity_score=None,
                 error=face_result["error"]
             )
         
         return VerifyResponse(
             success=True,
-            extracted_id=extracted_id,
-            id_type=id_type,
+            extracted_id=None,
+            id_type=None,
             similarity_score=face_result["similarity_score"],
             error=None
         )
