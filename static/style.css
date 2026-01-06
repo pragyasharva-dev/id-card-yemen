@@ -5,14 +5,17 @@
 }
 
 :root {
-    --bg: #0a0a0f;
-    --surface: #12121a;
-    --surface-hover: #1a1a24;
-    --border: #2a2a3a;
-    --text: #e4e4e7;
-    --text-muted: #71717a;
-    --accent: #6366f1;
-    --accent-hover: #818cf8;
+    /* New Color Theme: White base, Navy Blue primary, Orange secondary */
+    --bg: #ffffff;
+    --surface: #f8fafc;
+    --surface-hover: #f1f5f9;
+    --border: #e2e8f0;
+    --text: #0f172a;
+    --text-muted: #64748b;
+    --primary: #1a365d;
+    --primary-hover: #2d4a7c;
+    --accent: #f97316;
+    --accent-hover: #ea580c;
     --success: #22c55e;
     --error: #ef4444;
 }
@@ -26,7 +29,7 @@ body {
 }
 
 .container {
-    max-width: 900px;
+    max-width: 1000px;
     margin: 0 auto;
     padding: 2rem 1rem;
 }
@@ -37,14 +40,15 @@ header {
 }
 
 header h1 {
-    font-size: 2rem;
-    font-weight: 600;
+    font-size: 2.5rem;
+    font-weight: 700;
     letter-spacing: -0.02em;
+    color: var(--primary);
 }
 
 .subtitle {
     color: var(--text-muted);
-    font-size: 0.875rem;
+    font-size: 1rem;
     margin-top: 0.25rem;
 }
 
@@ -59,29 +63,57 @@ main {
     border: 1px solid var(--border);
     border-radius: 12px;
     padding: 1.5rem;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
 }
 
 .card h2 {
     font-size: 0.875rem;
-    font-weight: 500;
-    color: var(--text-muted);
+    font-weight: 600;
+    color: var(--primary);
     text-transform: uppercase;
     letter-spacing: 0.05em;
     margin-bottom: 1rem;
+    padding-bottom: 0.5rem;
+    border-bottom: 2px solid var(--accent);
+    display: inline-block;
 }
 
-/* Side by Side Layout */
-.side-by-side {
+.card h3 {
+    font-size: 0.8rem;
+    font-weight: 500;
+    color: var(--text-muted);
+    margin-bottom: 0.5rem;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+}
+
+/* Dual Upload Layout */
+.dual-upload {
     display: grid;
     grid-template-columns: 1fr 1fr;
     gap: 1.5rem;
+    margin-bottom: 1rem;
 }
 
-.side-panel {
+.upload-column {
     display: flex;
     flex-direction: column;
 }
 
+/* Dual Results Layout */
+.dual-results {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1.5rem;
+    margin-top: 1rem;
+}
+
+.results-column {
+    display: flex;
+    flex-direction: column;
+}
+
+/* Upload Area */
 .upload-area {
     border: 2px dashed var(--border);
     border-radius: 8px;
@@ -90,20 +122,21 @@ main {
     cursor: pointer;
     transition: all 0.2s ease;
     position: relative;
-    min-height: 200px;
+    min-height: 180px;
     display: flex;
     align-items: center;
     justify-content: center;
+    background: var(--bg);
 }
 
 .upload-area:hover {
     border-color: var(--accent);
-    background: var(--surface-hover);
+    background: #fff7ed;
 }
 
 .upload-area.dragover {
     border-color: var(--accent);
-    background: rgba(99, 102, 241, 0.1);
+    background: #ffedd5;
 }
 
 .upload-area.small {
@@ -114,6 +147,7 @@ main {
 .upload-area.has-image {
     padding: 0.5rem;
     border-style: solid;
+    border-color: var(--primary);
 }
 
 .upload-content {
@@ -135,7 +169,7 @@ main {
 
 .preview-full {
     max-width: 100%;
-    max-height: 250px;
+    max-height: 200px;
     border-radius: 6px;
     object-fit: contain;
 }
@@ -144,22 +178,23 @@ main {
     display: none !important;
 }
 
+/* Buttons */
 .btn {
     width: 100%;
-    padding: 0.75rem 1rem;
+    padding: 0.875rem 1rem;
     margin-top: 1rem;
-    background: var(--accent);
+    background: var(--primary);
     color: white;
     border: none;
     border-radius: 8px;
-    font-size: 0.875rem;
-    font-weight: 500;
+    font-size: 0.9rem;
+    font-weight: 600;
     cursor: pointer;
     transition: all 0.2s ease;
 }
 
 .btn:hover:not(:disabled) {
-    background: var(--accent-hover);
+    background: var(--primary-hover);
 }
 
 .btn:disabled {
@@ -167,13 +202,47 @@ main {
     cursor: not-allowed;
 }
 
+.btn.secondary {
+    background: var(--accent);
+}
+
+.btn.secondary:hover:not(:disabled) {
+    background: var(--accent-hover);
+}
+
+/* Validation Status */
+.validation-status {
+    margin-top: 1rem;
+    padding: 1rem;
+    border-radius: 8px;
+    text-align: center;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+}
+
+.validation-status.match {
+    background: #dcfce7;
+    color: #166534;
+    border: 1px solid #86efac;
+}
+
+.validation-status.mismatch {
+    background: #fef2f2;
+    color: #991b1b;
+    border: 1px solid #fca5a5;
+}
+
 /* Results Box */
 .results-box {
     background: var(--bg);
+    border: 1px solid var(--border);
     border-radius: 8px;
     padding: 1rem;
-    min-height: 200px;
-    height: 100%;
+    min-height: 180px;
+    flex: 1;
 }
 
 .placeholder {
@@ -206,6 +275,7 @@ main {
     text-align: right;
     word-break: break-all;
     font-size: 0.9rem;
+    color: var(--text);
 }
 
 .result-value.success {
@@ -219,16 +289,17 @@ main {
 .result-value.large {
     font-size: 1.1rem;
     font-weight: 600;
+    color: var(--primary);
 }
 
 .tag {
     display: inline-block;
     padding: 0.125rem 0.5rem;
-    background: rgba(99, 102, 241, 0.2);
+    background: rgba(249, 115, 22, 0.15);
     color: var(--accent);
     border-radius: 4px;
     font-size: 0.75rem;
-    font-weight: 500;
+    font-weight: 600;
 }
 
 /* Texts list */
@@ -272,7 +343,7 @@ main {
 .text-lang {
     font-size: 0.65rem;
     color: var(--accent);
-    background: rgba(99, 102, 241, 0.15);
+    background: rgba(249, 115, 22, 0.15);
     padding: 0.1rem 0.3rem;
     border-radius: 3px;
     white-space: nowrap;
@@ -311,7 +382,7 @@ main {
     padding: 0.75rem 1rem;
     border-radius: 8px;
     margin-bottom: 0.5rem;
-    border: none;
+    border: 1px solid var(--border);
 }
 
 /* Loading */
@@ -321,7 +392,7 @@ main {
     left: 0;
     right: 0;
     bottom: 0;
-    background: rgba(0, 0, 0, 0.7);
+    background: rgba(255, 255, 255, 0.9);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -352,7 +423,11 @@ footer {
 
 /* Responsive */
 @media (max-width: 768px) {
-    .side-by-side {
+    .dual-upload {
+        grid-template-columns: 1fr;
+    }
+
+    .dual-results {
         grid-template-columns: 1fr;
     }
 

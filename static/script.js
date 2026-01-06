@@ -1,16 +1,30 @@
 // State
-let idCardFile = null;
+let frontIdFile = null;
+let backIdFile = null;
 let selfieFile = null;
-let extractedId = null;
+let frontExtractedId = null;
+let backExtractedId = null;
+let idsMatch = false;
 
-// Elements
-const idUploadArea = document.getElementById('id-upload-area');
-const idCardInput = document.getElementById('id-card-input');
-const idPreview = document.getElementById('id-preview');
-const uploadPrompt = document.getElementById('upload-prompt');
+// Elements - Front ID
+const frontUploadArea = document.getElementById('front-upload-area');
+const frontIdInput = document.getElementById('front-id-input');
+const frontPreview = document.getElementById('front-preview');
+const frontPrompt = document.getElementById('front-prompt');
+const frontResults = document.getElementById('front-results');
+
+// Elements - Back ID
+const backUploadArea = document.getElementById('back-upload-area');
+const backIdInput = document.getElementById('back-id-input');
+const backPreview = document.getElementById('back-preview');
+const backPrompt = document.getElementById('back-prompt');
+const backResults = document.getElementById('back-results');
+
+// Elements - Common
 const extractBtn = document.getElementById('extract-btn');
-const resultsContent = document.getElementById('results-content');
+const validationStatus = document.getElementById('validation-status');
 
+// Elements - Selfie
 const selfieUploadArea = document.getElementById('selfie-upload-area');
 const selfieInput = document.getElementById('selfie-input');
 const selfiePreview = document.getElementById('selfie-preview');
@@ -21,9 +35,16 @@ const verifyResults = document.getElementById('verify-results');
 const loading = document.getElementById('loading');
 
 // Setup upload areas
-setupUploadArea(idUploadArea, idCardInput, idPreview, uploadPrompt, (file) => {
-    idCardFile = file;
-    extractBtn.disabled = false;
+setupUploadArea(frontUploadArea, frontIdInput, frontPreview, frontPrompt, (file) => {
+    frontIdFile = file;
+    resetOnIdChange();
+    updateExtractButton();
+});
+
+setupUploadArea(backUploadArea, backIdInput, backPreview, backPrompt, (file) => {
+    backIdFile = file;
+    resetOnIdChange();
+    updateExtractButton();
 });
 
 setupUploadArea(selfieUploadArea, selfieInput, selfiePreview, selfiePrompt, (file) => {
@@ -31,44 +52,57 @@ setupUploadArea(selfieUploadArea, selfieInput, selfiePreview, selfiePrompt, (fil
     updateVerifyButton();
 });
 
-// Extract button
+// Extract button - process both front and back
 extractBtn.addEventListener('click', async () => {
-    if (!idCardFile) return;
+    if (!frontIdFile || !backIdFile) return;
 
     showLoading();
 
+    // Reset previous results
+    frontExtractedId = null;
+    backExtractedId = null;
+    idsMatch = false;
+    validationStatus.classList.add('hidden');
+
     try {
-        const formData = new FormData();
-        formData.append('image', idCardFile);
+        // Process both images in parallel
+        const [frontData, backData] = await Promise.all([
+            extractId(frontIdFile),
+            extractId(backIdFile)
+        ]);
 
-        const response = await fetch('/extract-id', {
-            method: 'POST',
-            body: formData
-        });
-
-        const data = await response.json();
-        displayResults(data);
-
-        if (data.success && data.ocr_result?.extracted_id) {
-            extractedId = data.ocr_result.extracted_id;
-            updateVerifyButton();
+        // Display results for front
+        displayResults(frontData, frontResults);
+        if (frontData.success && frontData.ocr_result?.extracted_id) {
+            frontExtractedId = frontData.ocr_result.extracted_id;
         }
+
+        // Display results for back
+        displayResults(backData, backResults);
+        if (backData.success && backData.ocr_result?.extracted_id) {
+            backExtractedId = backData.ocr_result.extracted_id;
+        }
+
+        // Validate if both IDs match
+        validateIds();
+
     } catch (error) {
-        displayError('Failed to process image: ' + error.message);
+        displayError('Failed to process images: ' + error.message, frontResults);
+        displayError('Failed to process images: ' + error.message, backResults);
     }
 
     hideLoading();
 });
 
-// Verify button
+// Verify button - direct face comparison
 verifyBtn.addEventListener('click', async () => {
-    if (!extractedId || !selfieFile) return;
+    if (!idsMatch || !selfieFile || !frontIdFile) return;
 
     showLoading();
 
     try {
         const formData = new FormData();
-        formData.append('id_number', extractedId);
+        formData.append('id_card', frontIdFile);  // Send front ID image directly
         formData.append('selfie', selfieFile);
 
         const response = await fetch('/verify', {
@@ -91,6 +125,18 @@ verifyBtn.addEventListener('click', async () => {
 });
 
 // Functions
+async function extractId(file) {
+    const formData = new FormData();
+    formData.append('image', file);
+
+    const response = await fetch('/extract-id', {
+        method: 'POST',
+        body: formData
+    });
+
+    return await response.json();
+}
+
 function setupUploadArea(area, input, preview, prompt, onFile) {
     area.addEventListener('click', () => input.click());
 
@@ -132,9 +178,60 @@ function handleFile(file, area, preview, prompt, onFile) {
     onFile(file);
 }
 
-function displayResults(data) {
+function resetOnIdChange() {
+    // Reset selfie when ID images change
+    selfieFile = null;
+    selfiePreview.classList.add('hidden');
+    selfiePrompt.classList.remove('hidden');
+    selfieUploadArea.classList.remove('has-image');
+    selfieInput.value = '';
+
+    // Reset verification results
+    verifyResults.innerHTML = '';
+
+    // Reset ID extraction state
+    frontExtractedId = null;
+    backExtractedId = null;
+    idsMatch = false;
+    validationStatus.classList.add('hidden');
+
+    // Reset OCR results
+    frontResults.innerHTML = '<p class="placeholder">Upload front side to see results</p>';
+    backResults.innerHTML = '<p class="placeholder">Upload back side to see results</p>';
+
+    updateVerifyButton();
+}
+
+function validateIds() {
+    validationStatus.classList.remove('hidden', 'match', 'mismatch');
+
+    if (frontExtractedId && backExtractedId) {
+        if (frontExtractedId === backExtractedId) {
+            idsMatch = true;
+            validationStatus.classList.add('match');
+            validationStatus.innerHTML = `✓ IDs Match: <strong>${frontExtractedId}</strong>`;
+        } else {
+            idsMatch = false;
+            validationStatus.classList.add('mismatch');
+            validationStatus.innerHTML = `✗ IDs Don't Match: Front (${frontExtractedId}) ≠ Back (${backExtractedId})`;
+        }
+    } else if (frontExtractedId || backExtractedId) {
+        idsMatch = false;
+        validationStatus.classList.add('mismatch');
+        const found = frontExtractedId ? `Front: ${frontExtractedId}` : `Back: ${backExtractedId}`;
+        validationStatus.innerHTML = `⚠ ID found only on one side (${found})`;
+    } else {
+        idsMatch = false;
+        validationStatus.classList.add('mismatch');
+        validationStatus.innerHTML = '✗ No ID detected on either side';
+    }
+
+    updateVerifyButton();
+}
+
+function displayResults(data, container) {
     if (!data.success) {
-        resultsContent.innerHTML = `
+        container.innerHTML = `
             <div class="result-item">
                 <span class="result-label">Error</span>
                 <span class="result-value error">${data.error || 'Unknown error'}</span>
@@ -187,7 +284,7 @@ function displayResults(data) {
     if (ocr.text_results && ocr.text_results.length > 0) {
         html += `
             <div class="texts-list">
-                <span class="texts-label">Extracted Text (with language)</span>
+                <span class="texts-label">Extracted Text</span>
                 <div class="texts-content">
                     ${ocr.text_results.map(t => `<span class="text-with-lang"><span class="text-lang">${t.detected_language_display}</span> ${escapeHtml(t.text)}</span>`).join('')}
                 </div>
@@ -208,7 +305,7 @@ function displayResults(data) {
         html = '<p class="placeholder">No ID found in image</p>';
     }
 
-    resultsContent.innerHTML = html;
+    container.innerHTML = html;
 }
 
 function displayVerifyResults(data) {
@@ -238,8 +335,8 @@ function displayVerifyResults(data) {
     `;
 }
 
-function displayError(message) {
-    resultsContent.innerHTML = `
+function displayError(message, container) {
+    container.innerHTML = `
         <div class="result-item">
             <span class="result-label">Error</span>
             <span class="result-value error">${message}</span>
@@ -253,8 +350,12 @@ function escapeHtml(text) {
     return div.innerHTML;
 }
 
+function updateExtractButton() {
+    extractBtn.disabled = !frontIdFile || !backIdFile;
+}
+
 function updateVerifyButton() {
-    verifyBtn.disabled = !extractedId || !selfieFile;
+    verifyBtn.disabled = !idsMatch || !selfieFile;
 }
 
 function showLoading() {

@@ -16,27 +16,56 @@
         </header>
 
         <main>
-            <!-- OCR Section - Side by Side -->
+            <!-- OCR Section - Dual ID Card Upload -->
             <section class="card">
                 <h2>ID Card OCR</h2>
-                <div class="side-by-side">
-                    <!-- Left: Image Upload -->
-                    <div class="side-panel">
-                        <div class="upload-area" id="id-upload-area">
-                            <input type="file" id="id-card-input" accept="image/*" hidden>
-                            <div class="upload-content" id="upload-prompt">
+
+                <!-- Dual Upload Area -->
+                <div class="dual-upload">
+                    <!-- Front of ID -->
+                    <div class="upload-column">
+                        <h3>Front of ID</h3>
+                        <div class="upload-area" id="front-upload-area">
+                            <input type="file" id="front-id-input" accept="image/*" hidden>
+                            <div class="upload-content" id="front-prompt">
                                 <span class="upload-icon">📄</span>
-                                <p>Drop ID card or click to upload</p>
+                                <p>Drop front side or click</p>
                             </div>
-                            <img id="id-preview" class="preview-full hidden" alt="ID Card Preview">
+                            <img id="front-preview" class="preview-full hidden" alt="Front ID Preview">
                         </div>
-                        <button id="extract-btn" class="btn" disabled>Extract ID</button>
                     </div>
 
-                    <!-- Right: OCR Results -->
-                    <div class="side-panel">
-                        <div class="results-box" id="results-content">
-                            <p class="placeholder">Upload an ID card to see OCR results</p>
+                    <!-- Back of ID -->
+                    <div class="upload-column">
+                        <h3>Back of ID</h3>
+                        <div class="upload-area" id="back-upload-area">
+                            <input type="file" id="back-id-input" accept="image/*" hidden>
+                            <div class="upload-content" id="back-prompt">
+                                <span class="upload-icon">📄</span>
+                                <p>Drop back side or click</p>
+                            </div>
+                            <img id="back-preview" class="preview-full hidden" alt="Back ID Preview">
+                        </div>
+                    </div>
+                </div>
+
+                <button id="extract-btn" class="btn" disabled>Extract ID from Both Sides</button>
+
+                <!-- Validation Status -->
+                <div id="validation-status" class="validation-status hidden"></div>
+
+                <!-- Dual OCR Results -->
+                <div class="dual-results" id="dual-results">
+                    <div class="results-column">
+                        <h3>Front Results</h3>
+                        <div class="results-box" id="front-results">
+                            <p class="placeholder">Upload front side to see results</p>
+                        </div>
+                    </div>
+                    <div class="results-column">
+                        <h3>Back Results</h3>
+                        <div class="results-box" id="back-results">
+                            <p class="placeholder">Upload back side to see results</p>
                         </div>
                     </div>
                 </div>
