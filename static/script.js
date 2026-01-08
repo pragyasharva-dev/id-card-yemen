@@ -21,7 +21,9 @@ const backPrompt = document.getElementById('back-prompt');
 const backResults = document.getElementById('back-results');
 
 // Elements - Common
-const extractBtn = document.getElementById('extract-btn');
+const extractFrontBtn = document.getElementById('extract-front-btn');
+const extractBackBtn = document.getElementById('extract-back-btn');
+const compareBtn = document.getElementById('compare-btn');
 const validationStatus = document.getElementById('validation-status');
 
 // Elements - Selfie
@@ -37,14 +39,14 @@ const loading = document.getElementById('loading');
 // Setup upload areas
 setupUploadArea(frontUploadArea, frontIdInput, frontPreview, frontPrompt, (file) => {
     frontIdFile = file;
-    resetOnIdChange();
-    updateExtractButton();
+    resetFrontResults();
+    updateExtractFrontButton();
 });
 
 setupUploadArea(backUploadArea, backIdInput, backPreview, backPrompt, (file) => {
     backIdFile = file;
-    resetOnIdChange();
-    updateExtractButton();
+    resetBackResults();
+    updateExtractBackButton();
 });
 
 setupUploadArea(selfieUploadArea, selfieInput, selfiePreview, selfiePrompt, (file) => {
@@ -52,46 +54,58 @@ setupUploadArea(selfieUploadArea, selfieInput, selfiePreview, selfiePrompt, (fil
     updateVerifyButton();
 });
 
-// Extract button - process both front and back
-extractBtn.addEventListener('click', async () => {
-    if (!frontIdFile || !backIdFile) return;
+// Extract Front button - process front side only
+extractFrontBtn.addEventListener('click', async () => {
+    if (!frontIdFile) return;
 
     showLoading();
-
-    // Reset previous results
     frontExtractedId = null;
+    idsMatch = false;
+    validationStatus.classList.add('hidden');
+
+    try {
+        const frontData = await extractId(frontIdFile);
+        displayResults(frontData, frontResults);
+        if (frontData.success && frontData.ocr_result?.extracted_id) {
+            frontExtractedId = frontData.ocr_result.extracted_id;
+        }
+    } catch (error) {
+        displayError('Failed to process front image: ' + error.message, frontResults);
+    }
+
+    updateCompareButton();
+    updateVerifyButton();
+    hideLoading();
+});
+
+// Extract Back button - process back side only
+extractBackBtn.addEventListener('click', async () => {
+    if (!backIdFile) return;
+
+    showLoading();
     backExtractedId = null;
     idsMatch = false;
     validationStatus.classList.add('hidden');
 
     try {
-        // Process both images in parallel
-        const [frontData, backData] = await Promise.all([
-            extractId(frontIdFile),
-            extractId(backIdFile)
-        ]);
-
-        // Display results for front
-        displayResults(frontData, frontResults);
-        if (frontData.success && frontData.ocr_result?.extracted_id) {
-            frontExtractedId = frontData.ocr_result.extracted_id;
-        }
-
-        // Display results for back
+        const backData = await extractId(backIdFile);
         displayResults(backData, backResults);
         if (backData.success && backData.ocr_result?.extracted_id) {
             backExtractedId = backData.ocr_result.extracted_id;
         }
-
-        // Validate if both IDs match
-        validateIds();
-
     } catch (error) {
-        displayError('Failed to process images: ' + error.message, frontResults);
-        displayError('Failed to process images: ' + error.message, backResults);
+        displayError('Failed to process back image: ' + error.message, backResults);
     }
 
+    updateCompareButton();
+    updateVerifyButton();
     hideLoading();
+});
+
+// Compare button - validate if both IDs match
+compareBtn.addEventListener('click', () => {
+    if (!frontExtractedId || !backExtractedId) return;
+    validateIds();
 });
 
 // Verify button - direct face comparison
@@ -178,27 +192,37 @@ function handleFile(file, area, preview, prompt, onFile) {
     onFile(file);
 }
 
-function resetOnIdChange() {
-    // Reset selfie when ID images change
+function resetFrontResults() {
+    // Reset front extraction state
+    frontExtractedId = null;
+    idsMatch = false;
+    validationStatus.classList.add('hidden');
+    frontResults.innerHTML = '<p class="placeholder">Upload front side to see results</p>';
+
+    // Reset selfie and verification when front changes
+    resetSelfieAndVerification();
+    updateCompareButton();
+}
+
+function resetBackResults() {
+    // Reset back extraction state
+    backExtractedId = null;
+    idsMatch = false;
+    validationStatus.classList.add('hidden');
+    backResults.innerHTML = '<p class="placeholder">Upload back side to see results</p>';
+
+    // Reset selfie and verification when back changes
+    resetSelfieAndVerification();
+    updateCompareButton();
+}
+
+function resetSelfieAndVerification() {
     selfieFile = null;
     selfiePreview.classList.add('hidden');
     selfiePrompt.classList.remove('hidden');
     selfieUploadArea.classList.remove('has-image');
     selfieInput.value = '';
-
-    // Reset verification results
     verifyResults.innerHTML = '';
-
-    // Reset ID extraction state
-    frontExtractedId = null;
-    backExtractedId = null;
-    idsMatch = false;
-    validationStatus.classList.add('hidden');
-
-    // Reset OCR results
-    frontResults.innerHTML = '<p class="placeholder">Upload front side to see results</p>';
-    backResults.innerHTML = '<p class="placeholder">Upload back side to see results</p>';
-
     updateVerifyButton();
 }
 
@@ -350,8 +374,16 @@ function escapeHtml(text) {
     return div.innerHTML;
 }
 
-function updateExtractButton() {
-    extractBtn.disabled = !frontIdFile || !backIdFile;
+function updateExtractFrontButton() {
+    extractFrontBtn.disabled = !frontIdFile;
+}
+
+function updateExtractBackButton() {
+    extractBackBtn.disabled = !backIdFile;
+}
+
+function updateCompareButton() {
+    compareBtn.disabled = !frontExtractedId || !backExtractedId;
 }
 
 function updateVerifyButton() {

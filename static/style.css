@@ -210,6 +210,18 @@ main {
     background: var(--accent-hover);
 }
 
+/* Dual Buttons Layout */
+.dual-buttons {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1rem;
+    margin-top: 1rem;
+}
+
+.btn.extract-single {
+    margin-top: 0;
+}
+
 /* Validation Status */
 .validation-status {
     margin-top: 1rem;
