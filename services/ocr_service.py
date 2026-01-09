@@ -5,7 +5,7 @@ Uses PaddleOCR for text extraction and intelligent pattern matching
 to identify ID numbers from various card types (Aadhaar, PAN, Yemen ID, etc.)
 
 Supports multilingual OCR with per-text language detection:
-English, Arabic, Hindi, Bengali
+English, Arabic
 
 STRICT VALIDATION: Non-English OCR models must produce text containing
 at least some characters from their native script, otherwise output is rejected.
@@ -38,18 +38,6 @@ SUPPORTED_LANGUAGES = {
         'flag': '🇾🇪',
         'ranges': [(0x0600, 0x06FF), (0x0750, 0x077F)],  # Arabic, Arabic Supplement
         'require_native_script': True  # Must have Arabic characters
-    },
-    'hi': {
-        'name': 'Hindi',
-        'flag': '🇮🇳',
-        'ranges': [(0x0900, 0x097F)],  # Devanagari
-        'require_native_script': True  # Must have Devanagari characters
-    },
-    'bengali': {
-        'name': 'Bengali',
-        'flag': '🇮🇳',
-        'ranges': [(0x0980, 0x09FF)],  # Bengali script
-        'require_native_script': True  # Must have Bengali characters
     }
 }
 
@@ -99,7 +87,7 @@ def text_matches_language(text: str, ocr_lang: str) -> bool:
     if not lang_info.get('require_native_script', False):
         return True
     
-    # For Arabic/Hindi/Bengali: Must have at least SOME native script characters
+    # For Arabic: Must have at least SOME native script characters
     native_count = count_native_chars(text, ocr_lang)
     
     # If zero native script characters, this is garbage output
