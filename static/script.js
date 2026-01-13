@@ -6,6 +6,14 @@ let frontExtractedId = null;
 let backExtractedId = null;
 let idsMatch = false;
 
+// Translation state - store OCR results for translation
+let frontOcrResults = null;
+let backOcrResults = null;
+let frontTranslations = null;  // Map of original -> translated
+let backTranslations = null;
+let frontShowTranslated = false;
+let backShowTranslated = false;
+
 // Elements - Front ID
 const frontUploadArea = document.getElementById('front-upload-area');
 const frontIdInput = document.getElementById('front-id-input');
@@ -65,7 +73,7 @@ extractFrontBtn.addEventListener('click', async () => {
 
     try {
         const frontData = await extractId(frontIdFile);
-        displayResults(frontData, frontResults);
+        displayResults(frontData, frontResults, 'front');
         if (frontData.success && frontData.ocr_result?.extracted_id) {
             frontExtractedId = frontData.ocr_result.extracted_id;
         }
@@ -89,7 +97,7 @@ extractBackBtn.addEventListener('click', async () => {
 
     try {
         const backData = await extractId(backIdFile);
-        displayResults(backData, backResults);
+        displayResults(backData, backResults, 'back');
         if (backData.success && backData.ocr_result?.extracted_id) {
             backExtractedId = backData.ocr_result.extracted_id;
         }
@@ -253,7 +261,7 @@ function validateIds() {
     updateVerifyButton();
 }
 
-function displayResults(data, container) {
+function displayResults(data, container, side = 'front') {
     if (!data.success) {
         container.innerHTML = `
             <div class="result-item">
@@ -265,6 +273,18 @@ function displayResults(data, container) {
     }
 
     const ocr = data.ocr_result;
+
+    // Store OCR results for translation
+    if (side === 'front') {
+        frontOcrResults = ocr.text_results || [];
+        frontTranslations = null;
+        frontShowTranslated = false;
+    } else {
+        backOcrResults = ocr.text_results || [];
+        backTranslations = null;
+        backShowTranslated = false;
+    }
+
     let html = '';
 
     if (ocr.extracted_id) {
@@ -304,12 +324,18 @@ function displayResults(data, container) {
         `;
     }
 
+    // Check if there's Arabic text to translate
+    const hasArabic = (ocr.text_results || []).some(t => t.detected_language === 'ar');
+
     // Show detailed text results with per-text language
     if (ocr.text_results && ocr.text_results.length > 0) {
         html += `
             <div class="texts-list">
-                <span class="texts-label">Extracted Text</span>
-                <div class="texts-content">
+                <div class="texts-header">
+                    <span class="texts-label">Extracted Text</span>
+                    ${hasArabic ? `<button class="translate-btn" id="translate-${side}-btn" onclick="toggleTranslation('${side}')">🌐 Translate</button>` : ''}
+                </div>
+                <div class="texts-content" id="texts-${side}">
                     ${ocr.text_results.map(t => `<span class="text-with-lang"><span class="text-lang">${t.detected_language_display}</span> ${escapeHtml(t.text)}</span>`).join('')}
                 </div>
             </div>
@@ -331,6 +357,107 @@ function displayResults(data, container) {
 
     container.innerHTML = html;
 }
+
+// Translation functions
+async function toggleTranslation(side) {
+    const btn = document.getElementById(`translate-${side}-btn`);
+    const textsContainer = document.getElementById(`texts-${side}`);
+    const ocrResults = side === 'front' ? frontOcrResults : backOcrResults;
+    let translations = side === 'front' ? frontTranslations : backTranslations;
+    let showTranslated = side === 'front' ? frontShowTranslated : backShowTranslated;
+
+    if (!ocrResults || ocrResults.length === 0) return;
+
+    // If already showing translated, toggle back to original
+    if (showTranslated) {
+        displayOriginalTexts(textsContainer, ocrResults);
+        btn.textContent = '🌐 Translate';
+        btn.classList.remove('translated');
+        if (side === 'front') frontShowTranslated = false;
+        else backShowTranslated = false;
+        return;
+    }
+
+    // If we don't have translations yet, fetch them
+    if (!translations) {
+        btn.textContent = '⏳ Translating...';
+        btn.disabled = true;
+
+        try {
+            // Get only Arabic texts
+            const arabicTexts = ocrResults
+                .filter(t => t.detected_language === 'ar')
+                .map(t => t.text);
+
+            if (arabicTexts.length === 0) {
+                btn.textContent = '🌐 Translate';
+                btn.disabled = false;
+                return;
+            }
+
+            const response = await fetch('/translate', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ texts: arabicTexts })
+            });
+
+            const data = await response.json();
+
+            if (data.success) {
+                // Create a map of original -> translated
+                translations = {};
+                data.translations.forEach(t => {
+                    translations[t.original] = t.translated;
+                });
+
+                if (side === 'front') frontTranslations = translations;
+                else backTranslations = translations;
+            } else {
+                throw new Error(data.error || 'Translation failed');
+            }
+        } catch (error) {
+            console.error('Translation error:', error);
+            btn.textContent = '❌ Error';
+            btn.disabled = false;
+            setTimeout(() => {
+                btn.textContent = '🌐 Translate';
+            }, 2000);
+            return;
+        }
+
+        btn.disabled = false;
+    }
+
+    // Display translated texts
+    displayTranslatedTexts(textsContainer, ocrResults, translations);
+    btn.textContent = '🔄 Show Original';
+    btn.classList.add('translated');
+    if (side === 'front') frontShowTranslated = true;
+    else backShowTranslated = true;
+}
+
+function displayOriginalTexts(container, ocrResults) {
+    container.innerHTML = ocrResults.map(t =>
+        `<span class="text-with-lang"><span class="text-lang">${t.detected_language_display}</span> ${escapeHtml(t.text)}</span>`
+    ).join('');
+}
+
+function displayTranslatedTexts(container, ocrResults, translations) {
+    container.innerHTML = ocrResults.map(t => {
+        if (t.detected_language === 'ar' && translations[t.text]) {
+            // Show both original and translated for Arabic
+            return `<span class="text-with-lang translated">
+                <span class="text-lang">🇬🇧 EN</span>
+                <span class="translated-text">${escapeHtml(translations[t.text])}</span>
+                <span class="original-text-small">(${escapeHtml(t.text)})</span>
+            </span>`;
+        } else {
+            // Non-Arabic text stays the same
+            return `<span class="text-with-lang"><span class="text-lang">${t.detected_language_display}</span> ${escapeHtml(t.text)}</span>`;
+        }
+    }).join('');
+}
+
 
 function displayVerifyResults(data) {
     if (!data.success) {

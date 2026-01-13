@@ -361,6 +361,66 @@ main {
     white-space: nowrap;
 }
 
+/* Texts Header with Translate Button */
+.texts-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 0.5rem;
+}
+
+.translate-btn {
+    padding: 0.35rem 0.75rem;
+    background: var(--primary);
+    color: white;
+    border: none;
+    border-radius: 6px;
+    font-size: 0.75rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+}
+
+.translate-btn:hover:not(:disabled) {
+    background: var(--primary-hover);
+}
+
+.translate-btn:disabled {
+    opacity: 0.6;
+    cursor: wait;
+}
+
+.translate-btn.translated {
+    background: var(--accent);
+}
+
+.translate-btn.translated:hover:not(:disabled) {
+    background: var(--accent-hover);
+}
+
+/* Translated Text Styling */
+.text-with-lang.translated {
+    background: #dbeafe;
+    border: 1px solid #93c5fd;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.35rem;
+}
+
+.translated-text {
+    font-weight: 500;
+    color: var(--text);
+}
+
+.original-text-small {
+    font-size: 0.65rem;
+    color: var(--text-muted);
+    font-style: italic;
+}
+
 /* e-KYC Section */
 .ekyc-content {
     display: grid;
