@@ -18,47 +18,47 @@ for dir_path in [ID_CARDS_DIR, SELFIES_DIR, PROCESSED_DIR]:
 # ID Type Patterns - Used for intelligent ID detection
 # Format: (pattern_name, regex_pattern, description)
 ID_PATTERNS = {
-    "aadhaar": {
-        "pattern": r"^\d{12}$",
-        "description": "12-digit numeric Aadhaar number",
-        "length": 12,
-        "type": "numeric"
-    },
-    "pan": {
-        "pattern": r"^[A-Z]{5}[0-9]{4}[A-Z]$",
-        "description": "10-character alphanumeric PAN (AAAAA9999A)",
-        "length": 10,
-        "type": "alphanumeric"
-    },
+    # Indian IDs - commented out
+    # "aadhaar": {
+    #     "pattern": r"^\d{12}$",
+    #     "description": "12-digit numeric Aadhaar number",
+    #     "length": 12,
+    #     "type": "numeric"
+    # },
+    # "pan": {
+    #     "pattern": r"^[A-Z]{5}[0-9]{4}[A-Z]$",
+    #     "description": "10-character alphanumeric PAN (AAAAA9999A)",
+    #     "length": 10,
+    #     "type": "alphanumeric"
+    # },
     "yemen_id": {
         "pattern": r"^\d{11}$",
         "description": "11-digit numeric Yemen ID",
         "length": 11,
         "type": "numeric"
     },
-    "passport": {
-        "pattern": r"^[A-Z][0-9]{7}$",
-        "description": "Indian passport format (A1234567)",
-        "length": 8,
-        "type": "alphanumeric"
-    },
-    "voter_id": {
-        "pattern": r"^[A-Z]{3}[0-9]{7}$",
-        "description": "Indian Voter ID (AAA1234567)",
-        "length": 10,
-        "type": "alphanumeric"
-    },
-    "driving_license": {
-        "pattern": r"^[A-Z]{2}[0-9]{2}[0-9]{11}$",
-        "description": "Indian Driving License format",
-        "length": 15,
-        "type": "alphanumeric"
-    }
+    # "passport": {
+    #     "pattern": r"^[A-Z][0-9]{7}$",
+    #     "description": "Indian passport format (A1234567)",
+    #     "length": 8,
+    #     "type": "alphanumeric"
+    # },
+    # "voter_id": {
+    #     "pattern": r"^[A-Z]{3}[0-9]{7}$",
+    #     "description": "Indian Voter ID (AAA1234567)",
+    #     "length": 10,
+    #     "type": "alphanumeric"
+    # },
+    # "driving_license": {
+    #     "pattern": r"^[A-Z]{2}[0-9]{2}[0-9]{11}$",
+    #     "description": "Indian Driving License format",
+    #     "length": 15,
+    #     "type": "alphanumeric"
+    # }
 }
 
-# OCR Settings
-OCR_LANGUAGE = "en"  # Changed from 'ar' for Indian IDs
-OCR_CONFIDENCE_THRESHOLD = 0.6
+
+OCR_CONFIDENCE_THRESHOLD = 0.7
 
 # Face Recognition Settings
 FACE_DETECTION_MODEL = "buffalo_l"  # InsightFace model
