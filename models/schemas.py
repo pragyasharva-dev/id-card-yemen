@@ -176,3 +176,29 @@ class HealthResponse(BaseModel):
     status: str = "ok"
     ocr_ready: bool = False
     face_recognition_ready: bool = False
+
+
+# Translation schemas
+class TranslateRequest(BaseModel):
+    """Request model for the /translate endpoint."""
+    texts: List[str] = Field(
+        ..., 
+        description="List of Arabic texts to translate to English"
+    )
+
+
+class TranslatedText(BaseModel):
+    """Single translation result."""
+    original: str = Field(..., description="Original Arabic text")
+    translated: str = Field(..., description="Translated English text")
+
+
+class TranslateResponse(BaseModel):
+    """Response model for the /translate endpoint."""
+    success: bool = Field(..., description="Whether translation completed successfully")
+    translations: List[TranslatedText] = Field(
+        default_factory=list,
+        description="List of translation results"
+    )
+    error: Optional[str] = Field(None, description="Error message if translation failed")
+
