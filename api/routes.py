@@ -5,6 +5,7 @@ Provides endpoints for:
 - /verify: Full e-KYC verification (OCR + Face Match)
 - /extract-id: Extract ID number from ID card
 - /compare-faces: Compare two face images
+- /translate: Translate Arabic texts to English
 - /process-batch: Batch process ID cards
 - /health: Health check
 """
@@ -18,7 +19,8 @@ from models.schemas import (
     ExtractIDRequest, ExtractIDResponse,
     CompareFacesRequest, CompareFacesResponse,
     BatchProcessRequest, BatchProcessResponse,
-    HealthResponse, OCRResult, FaceMatchResult
+    HealthResponse, OCRResult, FaceMatchResult,
+    TranslateRequest, TranslateResponse, TranslatedText
 )
 from services.ocr_service import extract_id_from_image, get_ocr_service
 from services.face_recognition import verify_identity, compare_faces, is_ready as face_ready
@@ -326,4 +328,47 @@ async def process_batch_endpoint(request: BatchProcessRequest):
             failed_count=0,
             results=[],
             errors=[str(e)]
+        )
+
+
+@router.post("/translate", response_model=TranslateResponse)
+async def translate_texts_endpoint(request: TranslateRequest):
+    """
+    Translate Arabic texts to English.
+    
+    Called on-demand when user clicks Translate button in the UI.
+    Uses Google Translate via deep-translator library.
+    """
+    try:
+        from services.translation_service import translate_arabic_to_english
+        
+        if not request.texts:
+            return TranslateResponse(
+                success=True,
+                translations=[],
+                error=None
+            )
+        
+        # Translate all texts
+        results = translate_arabic_to_english(request.texts)
+        
+        translations = [
+            TranslatedText(
+                original=r["original"],
+                translated=r["translated"]
+            )
+            for r in results
+        ]
+        
+        return TranslateResponse(
+            success=True,
+            translations=translations,
+            error=None
+        )
+        
+    except Exception as e:
+        return TranslateResponse(
+            success=False,
+            translations=[],
+            error=str(e)
         )
