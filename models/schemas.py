@@ -103,6 +103,43 @@ class VerifyResponse(BaseModel):
         None, 
         description="Face similarity score (0.0 to 1.0)"
     )
+    id_front: Optional[str] = Field(
+        None,
+        description="Filename of the front ID card image"
+    )
+    id_back: Optional[str] = Field(
+        None,
+        description="Filename of the back ID card image"
+    )
+    # Structured ID card data fields
+    name_arabic: Optional[str] = Field(
+        None,
+        description="Cardholder name in Arabic"
+    )
+    name_english: Optional[str] = Field(
+        None,
+        description="Cardholder name in English"
+    )
+    date_of_birth: Optional[str] = Field(
+        None,
+        description="Date of birth in YYYY-MM-DD format"
+    )
+    gender: Optional[str] = Field(
+        None,
+        description="Gender (Male/Female)"
+    )
+    address: Optional[str] = Field(
+        None,
+        description="Address in English"
+    )
+    issuance_date: Optional[str] = Field(
+        None,
+        description="ID card issuance date in YYYY-MM-DD format"
+    )
+    expiry_date: Optional[str] = Field(
+        None,
+        description="ID card expiry date in YYYY-MM-DD format"
+    )
     error: Optional[str] = Field(
         None, 
         description="Error message if verification failed"
@@ -113,8 +150,17 @@ class VerifyResponse(BaseModel):
             "example": {
                 "success": True,
                 "extracted_id": "123456789012",
-                "id_type": "aadhaar",
+                "id_type": "yemen_id",
                 "similarity_score": 0.85,
+                "id_front": "123456789012_front_1234567890.jpg",
+                "id_back": "123456789012_back_1234567890.jpg",
+                "name_arabic": "أحمد محمد علي",
+                "name_english": "Ahmed Mohammed Ali",
+                "date_of_birth": "1990-05-15",
+                "gender": "Male",
+                "address": "Sanaa, Yemen",
+                "issuance_date": "2020-01-10",
+                "expiry_date": "2030-01-10",
                 "error": None
             }
         }
