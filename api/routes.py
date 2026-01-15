@@ -60,45 +60,106 @@ async def health_check():
 
 @router.post("/verify", response_model=VerifyResponse)
 async def verify_identity_endpoint(
-    id_card: UploadFile = File(..., description="ID card image file (front side)"),
-    selfie: UploadFile = File(..., description="Selfie image file")
+    id_card_front: UploadFile = File(..., description="ID card front side image"),
+    selfie: UploadFile = File(..., description="Selfie image file"),
+    id_card_back: UploadFile = File(None, description="ID card back side image (optional)")
 ):
     """
-    e-KYC verification endpoint with direct face comparison.
+    e-KYC verification endpoint with optional front and back ID card support.
     
-    1. Receives ID card image directly (no database search)
-    2. Extracts face from ID card
-    3. Compares with selfie face
-    4. Returns similarity score
+    1. Receives ID card front (required) and optionally back side
+    2. Extracts ID number and structured data from front card
+    3. Extracts face from front card
+    4. Compares with selfie face
+    5. Returns extracted data and similarity score
     
     The similarity score is a value between 0.0 and 1.0 - 
     higher values indicate higher likelihood of same person.
     """
     try:
-        # Load both images directly
-        id_card_bytes = await id_card.read()
+        from services.id_card_parser import parse_yemen_id_card
+        
+        # Load front ID card and selfie
+        id_card_front_bytes = await id_card_front.read()
         selfie_bytes = await selfie.read()
         
-        id_card_image = load_image(id_card_bytes)
+        id_card_front_image = load_image(id_card_front_bytes)
         selfie_image = load_image(selfie_bytes)
         
-        # Direct face verification - no database search needed
-        face_result = verify_identity(id_card_image, selfie_image)
+        # Initialize filenames
+        id_front_filename = None
+        id_back_filename = None
+        
+        # Optionally load back ID card
+        id_card_back_image = None
+        if id_card_back:
+            id_card_back_bytes = await id_card_back.read()
+            id_card_back_image = load_image(id_card_back_bytes)
+        
+        # Extract ID and all OCR data from front card
+        front_ocr_result = extract_id_from_image(id_card_front_image)
+        extracted_id = front_ocr_result.get("extracted_id")
+        id_type = front_ocr_result.get("id_type")
+        
+        # Extract OCR from back card if provided
+        back_ocr_result = None
+        if id_card_back_image is not None:
+            back_ocr_result = extract_id_from_image(id_card_back_image)
+        
+        # Parse structured data from FRONT and BACK OCR results separately
+        parsed_data = parse_yemen_id_card(front_ocr_result, back_ocr_result)
+        
+        # Save images with proper naming if ID was extracted
+        if extracted_id:
+            import time
+            timestamp = int(time.time())
+            
+            # Save front image to processed directory
+            id_front_filename = f"{extracted_id}_front_{timestamp}.jpg"
+            save_image(id_card_front_image, id_front_filename, PROCESSED_DIR)
+            
+            # Save back image if provided
+            if id_card_back_image is not None:
+                id_back_filename = f"{extracted_id}_back_{timestamp}.jpg"
+                save_image(id_card_back_image, id_back_filename, PROCESSED_DIR)
+        
+        # Face verification using front card
+        face_result = verify_identity(id_card_front_image, selfie_image)
         
         if face_result.get("error"):
             return VerifyResponse(
                 success=False,
-                extracted_id=None,
-                id_type=None,
+                extracted_id=extracted_id,
+                id_type=id_type,
                 similarity_score=None,
+                id_front=id_front_filename,
+                id_back=id_back_filename,
+                name_arabic=parsed_data.get("name_arabic"),
+                name_english=parsed_data.get("name_english"),
+                date_of_birth=parsed_data.get("date_of_birth"),
+                gender=parsed_data.get("gender"),
+                address=parsed_data.get("address"),
+                nationality=parsed_data.get("nationality"),
+                issuance_date=parsed_data.get("issuance_date"),
+                expiry_date=parsed_data.get("expiry_date"),
                 error=face_result["error"]
             )
         
         return VerifyResponse(
             success=True,
-            extracted_id=None,
-            id_type=None,
+            extracted_id=extracted_id,
+            id_type=id_type,
             similarity_score=face_result["similarity_score"],
+            id_front=id_front_filename,
+            id_back=id_back_filename,
+            name_arabic=parsed_data.get("name_arabic"),
+            name_english=parsed_data.get("name_english"),
+            date_of_birth=parsed_data.get("date_of_birth"),
+            gender=parsed_data.get("gender"),
+            address=parsed_data.get("address"),
+            nationality=parsed_data.get("nationality"),
+            issuance_date=parsed_data.get("issuance_date"),
+            expiry_date=parsed_data.get("expiry_date"),
             error=None
         )
         
@@ -108,6 +169,16 @@ async def verify_identity_endpoint(
             extracted_id=None,
             id_type=None,
             similarity_score=None,
+            id_front=None,
+            id_back=None,
+            name_arabic=None,
+            name_english=None,
+            date_of_birth=None,
+            gender=None,
+            address=None,
+            nationality=None,
+            issuance_date=None,
+            expiry_date=None,
             error=str(e)
         )
 
@@ -139,6 +210,16 @@ async def verify_identity_json(request: VerifyRequest):
                 extracted_id=request.id_number,
                 id_type=None,
                 similarity_score=None,
+                id_front=None,
+                id_back=None,
+                name_arabic=None,
+                name_english=None,
+                date_of_birth=None,
+                gender=None,
+                address=None,
+                nationality=None,
+                issuance_date=None,
+                expiry_date=None,
                 error=f"ID card with number '{request.id_number}' not found in database"
             )
         
@@ -155,6 +236,16 @@ async def verify_identity_json(request: VerifyRequest):
                 extracted_id=extracted_id,
                 id_type=id_type,
                 similarity_score=None,
+                id_front=None,
+                id_back=None,
+                name_arabic=None,
+                name_english=None,
+                date_of_birth=None,
+                gender=None,
+                address=None,
+                nationality=None,
+                issuance_date=None,
+                expiry_date=None,
                 error=face_result["error"]
             )
         
@@ -163,6 +254,16 @@ async def verify_identity_json(request: VerifyRequest):
             extracted_id=extracted_id,
             id_type=id_type,
             similarity_score=face_result["similarity_score"],
+            id_front=None,
+            id_back=None,
+            name_arabic=None,
+            name_english=None,
+            date_of_birth=None,
+            gender=None,
+            address=None,
+            nationality=None,
+            issuance_date=None,
+            expiry_date=None,
             error=None
         )
         
@@ -172,6 +273,16 @@ async def verify_identity_json(request: VerifyRequest):
             extracted_id=None,
             id_type=None,
             similarity_score=None,
+            id_front=None,
+            id_back=None,
+            name_arabic=None,
+            name_english=None,
+            date_of_birth=None,
+            gender=None,
+            address=None,
+            nationality=None,
+            issuance_date=None,
+            expiry_date=None,
             error=str(e)
         )
 
