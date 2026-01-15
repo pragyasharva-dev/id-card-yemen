@@ -85,7 +85,25 @@ Thumbs.db
 *.log
 logs/
 
+# Project-specific
 gen-lang-client-0314670670-f9414eb2037a.json
 *.png
-data/
+*.jpg
+*.jpeg
 ocr_output.txt
+
+# Data directories - ignore processed files but keep structure
+data/processed/*
+!data/processed/.gitkeep
+data/id_cards/*.jpg
+data/id_cards/*.png
+data/selfies/*.jpg
+data/selfies/*.png
+
+# Keep test data
+!data/id_cards/.gitkeep
+!data/selfies/.gitkeep
+
+# Webhook files (optional feature, not core)
+services/webhook_service.py
+config/webhook_config.py
