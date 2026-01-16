@@ -128,9 +128,9 @@ class VerifyResponse(BaseModel):
         None,
         description="Gender (Male/Female)"
     )
-    address: Optional[str] = Field(
+    place_of_birth: Optional[str] = Field(
         None,
-        description="Address in English"
+        description="Place of Birth"
     )
     issuance_date: Optional[str] = Field(
         None,

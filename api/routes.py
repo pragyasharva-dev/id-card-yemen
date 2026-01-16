@@ -138,8 +138,7 @@ async def verify_identity_endpoint(
                 name_english=parsed_data.get("name_english"),
                 date_of_birth=parsed_data.get("date_of_birth"),
                 gender=parsed_data.get("gender"),
-                address=parsed_data.get("address"),
-                nationality=parsed_data.get("nationality"),
+                place_of_birth=parsed_data.get("place_of_birth"),
                 issuance_date=parsed_data.get("issuance_date"),
                 expiry_date=parsed_data.get("expiry_date"),
                 error=face_result["error"]
@@ -156,8 +155,7 @@ async def verify_identity_endpoint(
             name_english=parsed_data.get("name_english"),
             date_of_birth=parsed_data.get("date_of_birth"),
             gender=parsed_data.get("gender"),
-            address=parsed_data.get("address"),
-            nationality=parsed_data.get("nationality"),
+            place_of_birth=parsed_data.get("place_of_birth"),
             issuance_date=parsed_data.get("issuance_date"),
             expiry_date=parsed_data.get("expiry_date"),
             error=None
@@ -175,8 +173,7 @@ async def verify_identity_endpoint(
             name_english=None,
             date_of_birth=None,
             gender=None,
-            address=None,
-            nationality=None,
+            place_of_birth=None,
             issuance_date=None,
             expiry_date=None,
             error=str(e)
@@ -216,8 +213,7 @@ async def verify_identity_json(request: VerifyRequest):
                 name_english=None,
                 date_of_birth=None,
                 gender=None,
-                address=None,
-                nationality=None,
+                place_of_birth=None,
                 issuance_date=None,
                 expiry_date=None,
                 error=f"ID card with number '{request.id_number}' not found in database"
@@ -242,8 +238,7 @@ async def verify_identity_json(request: VerifyRequest):
                 name_english=None,
                 date_of_birth=None,
                 gender=None,
-                address=None,
-                nationality=None,
+                place_of_birth=None,
                 issuance_date=None,
                 expiry_date=None,
                 error=face_result["error"]
@@ -260,8 +255,7 @@ async def verify_identity_json(request: VerifyRequest):
             name_english=None,
             date_of_birth=None,
             gender=None,
-            address=None,
-            nationality=None,
+            place_of_birth=None,
             issuance_date=None,
             expiry_date=None,
             error=None
@@ -279,8 +273,7 @@ async def verify_identity_json(request: VerifyRequest):
             name_english=None,
             date_of_birth=None,
             gender=None,
-            address=None,
-            nationality=None,
+            place_of_birth=None,
             issuance_date=None,
             expiry_date=None,
             error=str(e)

@@ -5,7 +5,8 @@ Tests the new features:
 - Name extraction (Arabic & English)
 - Address extraction
 - Date extraction (DOB, Issuance, Expiry)
-- Gender, Nationality
+- Gender
+- Place of Birth
 - Image filename storage
 
 Usage:
@@ -119,11 +120,10 @@ def test_verify(id_card_front_path: str, selfie_path: str, id_card_back_path: st
         print_field("Name (English)", result.get('name_english'), "\033[92m")
         print_field("Date of Birth", result.get('date_of_birth'))
         print_field("Gender", result.get('gender'))
-        print_field("Nationality", result.get('nationality'))
         
-        # Address
-        print_section("Address")
-        print_field("Address", result.get('address'), "\033[94m")
+        # Place of Birth
+        print_section("Place of Birth")
+        print_field("Place of Birth", result.get('place_of_birth'), "\033[94m")
         
         # Dates
         print_section("Card Validity")
