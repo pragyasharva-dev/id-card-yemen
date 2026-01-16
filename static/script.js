@@ -124,7 +124,7 @@ verifyBtn.addEventListener('click', async () => {
 
     try {
         const formData = new FormData();
-        formData.append('id_card', frontIdFile);  // Send front ID image directly
+        formData.append('id_card_front', frontIdFile);  // Send front ID image directly
         formData.append('selfie', selfieFile);
 
         const response = await fetch('/verify', {
