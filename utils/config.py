@@ -37,6 +37,12 @@ ID_PATTERNS = {
         "length": 11,
         "type": "numeric"
     },
+    "yemen_passport": {
+        "pattern": r"^\d{8}$",
+        "description": "8-digit numeric Yemen Passport",
+        "length": 8,
+        "type": "numeric"
+    },
     # "passport": {
     #     "pattern": r"^[A-Z][0-9]{7}$",
     #     "description": "Indian passport format (A1234567)",
@@ -67,3 +73,10 @@ FACE_DETECTION_CTX = 0  # GPU context, -1 for CPU
 # Image Processing Settings
 SUPPORTED_IMAGE_FORMATS = [".png", ".jpg", ".jpeg", ".bmp", ".tiff"]
 MAX_IMAGE_SIZE = (2000, 2000)  # Maximum dimensions for processing
+
+# Place of Birth Validation Settings
+# Low-severity, non-blocking field - NEVER auto-rejects
+PLACE_OF_BIRTH_ENABLED = True
+PLACE_OF_BIRTH_PASS_THRESHOLD = 0.70  # Score >= 0.70 → pass
+PLACE_OF_BIRTH_MANUAL_THRESHOLD = 0.40  # Score < 0.70 → manual review
+# NOTE: No reject threshold - this field NEVER causes auto-rejection
