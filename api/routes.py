@@ -8,11 +8,18 @@ Provides endpoints for:
 - /translate: Translate Arabic texts to English
 - /process-batch: Batch process ID cards
 - /health: Health check
+- /save-id-card: Save extracted ID card data to database
+- /save-passport: Save extracted passport data to database
+- /id-cards: List all ID card records
+- /passports: List all passport records
+- /export/id-cards: Export ID cards to CSV/Excel
+- /export/passports: Export passports to CSV/Excel
 """
 import cv2
 from pathlib import Path
 from typing import Optional
-from fastapi import APIRouter, HTTPException, UploadFile, File, Form
+from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Query
+from fastapi.responses import FileResponse
 
 from models.schemas import (
     VerifyRequest, VerifyResponse,
@@ -20,11 +27,17 @@ from models.schemas import (
     CompareFacesRequest, CompareFacesResponse,
     BatchProcessRequest, BatchProcessResponse,
     HealthResponse, OCRResult, FaceMatchResult,
-    TranslateRequest, TranslateResponse, TranslatedText
+    TranslateRequest, TranslateResponse, TranslatedText,
+    # Database schemas
+    SaveIDCardRequest, SavePassportRequest,
+    IDCardRecord, PassportRecord,
+    IDCardListResponse, PassportListResponse,
+    SaveRecordResponse, ExportResponse
 )
 from services.ocr_service import extract_id_from_image, get_ocr_service
 from services.face_recognition import verify_identity, compare_faces, is_ready as face_ready
 from services.face_extractor import is_available as insightface_available
+from services.database import get_id_card_db, get_passport_db
 from utils.image_manager import load_image, rename_by_id, save_image
 from utils.config import ID_CARDS_DIR, PROCESSED_DIR
 
@@ -138,8 +151,7 @@ async def verify_identity_endpoint(
                 name_english=parsed_data.get("name_english"),
                 date_of_birth=parsed_data.get("date_of_birth"),
                 gender=parsed_data.get("gender"),
-                address=parsed_data.get("address"),
-                nationality=parsed_data.get("nationality"),
+                place_of_birth=parsed_data.get("place_of_birth"),
                 issuance_date=parsed_data.get("issuance_date"),
                 expiry_date=parsed_data.get("expiry_date"),
                 error=face_result["error"]
@@ -156,8 +168,7 @@ async def verify_identity_endpoint(
             name_english=parsed_data.get("name_english"),
             date_of_birth=parsed_data.get("date_of_birth"),
             gender=parsed_data.get("gender"),
-            address=parsed_data.get("address"),
-            nationality=parsed_data.get("nationality"),
+            place_of_birth=parsed_data.get("place_of_birth"),
             issuance_date=parsed_data.get("issuance_date"),
             expiry_date=parsed_data.get("expiry_date"),
             error=None
@@ -175,8 +186,7 @@ async def verify_identity_endpoint(
             name_english=None,
             date_of_birth=None,
             gender=None,
-            address=None,
-            nationality=None,
+            place_of_birth=None,
             issuance_date=None,
             expiry_date=None,
             error=str(e)
@@ -216,8 +226,7 @@ async def verify_identity_json(request: VerifyRequest):
                 name_english=None,
                 date_of_birth=None,
                 gender=None,
-                address=None,
-                nationality=None,
+                place_of_birth=None,
                 issuance_date=None,
                 expiry_date=None,
                 error=f"ID card with number '{request.id_number}' not found in database"
@@ -242,8 +251,7 @@ async def verify_identity_json(request: VerifyRequest):
                 name_english=None,
                 date_of_birth=None,
                 gender=None,
-                address=None,
-                nationality=None,
+                place_of_birth=None,
                 issuance_date=None,
                 expiry_date=None,
                 error=face_result["error"]
@@ -260,8 +268,7 @@ async def verify_identity_json(request: VerifyRequest):
             name_english=None,
             date_of_birth=None,
             gender=None,
-            address=None,
-            nationality=None,
+            place_of_birth=None,
             issuance_date=None,
             expiry_date=None,
             error=None
@@ -279,8 +286,7 @@ async def verify_identity_json(request: VerifyRequest):
             name_english=None,
             date_of_birth=None,
             gender=None,
-            address=None,
-            nationality=None,
+            place_of_birth=None,
             issuance_date=None,
             expiry_date=None,
             error=str(e)
@@ -483,3 +489,293 @@ async def translate_texts_endpoint(request: TranslateRequest):
             translations=[],
             error=str(e)
         )
+
+
+# =====================================================
+# DATABASE ENDPOINTS - ID Card and Passport Storage
+# =====================================================
+
+@router.post("/save-id-card", response_model=SaveRecordResponse)
+async def save_id_card(request: SaveIDCardRequest):
+    """
+    Save extracted ID card data to the database.
+    
+    Names can be provided as:
+    - Full names (name_arabic, name_english) which will be auto-split
+    - Individual components (first_name_*, middle_name_*, last_name_*)
+    """
+    try:
+        db = get_id_card_db()
+        
+        # Check if record already exists
+        existing = db.get_by_national_id(request.national_id)
+        if existing:
+            # Update existing record
+            data = request.model_dump(exclude_none=True)
+            db.update(request.national_id, data)
+            return SaveRecordResponse(
+                success=True,
+                record_id=existing["id"],
+                message=f"Updated existing record for ID: {request.national_id}"
+            )
+        
+        # Insert new record
+        data = request.model_dump(exclude_none=True)
+        record_id = db.insert(data)
+        
+        return SaveRecordResponse(
+            success=True,
+            record_id=record_id,
+            message=f"Saved new ID card record: {request.national_id}"
+        )
+        
+    except Exception as e:
+        return SaveRecordResponse(
+            success=False,
+            error=str(e)
+        )
+
+
+@router.post("/save-passport", response_model=SaveRecordResponse)
+async def save_passport(request: SavePassportRequest):
+    """
+    Save extracted passport data to the database.
+    
+    Names can be provided as:
+    - Full names (name_arabic, name_english) which will be auto-split
+    - Individual components (first_name_*, middle_name_*, last_name_*)
+    """
+    try:
+        db = get_passport_db()
+        
+        # Check if record already exists
+        existing = db.get_by_passport_number(request.passport_number)
+        if existing:
+            # Update existing record
+            data = request.model_dump(exclude_none=True)
+            db.update(request.passport_number, data)
+            return SaveRecordResponse(
+                success=True,
+                record_id=existing["id"],
+                message=f"Updated existing record for passport: {request.passport_number}"
+            )
+        
+        # Insert new record
+        data = request.model_dump(exclude_none=True)
+        record_id = db.insert(data)
+        
+        return SaveRecordResponse(
+            success=True,
+            record_id=record_id,
+            message=f"Saved new passport record: {request.passport_number}"
+        )
+        
+    except Exception as e:
+        return SaveRecordResponse(
+            success=False,
+            error=str(e)
+        )
+
+
+@router.get("/id-cards", response_model=IDCardListResponse)
+async def list_id_cards():
+    """
+    List all ID card records from the database.
+    """
+    try:
+        db = get_id_card_db()
+        records = db.get_all()
+        
+        return IDCardListResponse(
+            success=True,
+            count=len(records),
+            records=[IDCardRecord(**r) for r in records]
+        )
+        
+    except Exception as e:
+        return IDCardListResponse(
+            success=False,
+            error=str(e)
+        )
+
+
+@router.get("/passports", response_model=PassportListResponse)
+async def list_passports():
+    """
+    List all passport records from the database.
+    """
+    try:
+        db = get_passport_db()
+        records = db.get_all()
+        
+        return PassportListResponse(
+            success=True,
+            count=len(records),
+            records=[PassportRecord(**r) for r in records]
+        )
+        
+    except Exception as e:
+        return PassportListResponse(
+            success=False,
+            error=str(e)
+        )
+
+
+@router.get("/export/id-cards")
+async def export_id_cards(
+    format: str = Query("csv", description="Export format: csv or excel")
+):
+    """
+    Export all ID card records to CSV or Excel file.
+    
+    Returns the file for download.
+    """
+    try:
+        db = get_id_card_db()
+        
+        if format.lower() == "excel":
+            export_path = db.export_excel()
+            media_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        else:
+            export_path = db.export_csv()
+            media_type = "text/csv"
+        
+        return FileResponse(
+            path=str(export_path),
+            filename=export_path.name,
+            media_type=media_type
+        )
+        
+    except ImportError as e:
+        raise HTTPException(
+            status_code=500,
+            detail="Excel export requires openpyxl. Install with: pip install openpyxl"
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/export/passports")
+async def export_passports(
+    format: str = Query("csv", description="Export format: csv or excel")
+):
+    """
+    Export all passport records to CSV or Excel file.
+    
+    Returns the file for download.
+    """
+    try:
+        db = get_passport_db()
+        
+        if format.lower() == "excel":
+            export_path = db.export_excel()
+            media_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        else:
+            export_path = db.export_csv()
+            media_type = "text/csv"
+        
+        return FileResponse(
+            path=str(export_path),
+            filename=export_path.name,
+            media_type=media_type
+        )
+        
+    except ImportError as e:
+        raise HTTPException(
+            status_code=500,
+            detail="Excel export requires openpyxl. Install with: pip install openpyxl"
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/id-cards/{national_id}")
+async def get_id_card(national_id: str):
+    """
+    Get a specific ID card record by national ID number.
+    """
+    try:
+        db = get_id_card_db()
+        record = db.get_by_national_id(national_id)
+        
+        if not record:
+            raise HTTPException(
+                status_code=404,
+                detail=f"ID card with national ID '{national_id}' not found"
+            )
+        
+        return IDCardRecord(**record)
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/passports/{passport_number}")
+async def get_passport(passport_number: str):
+    """
+    Get a specific passport record by passport number.
+    """
+    try:
+        db = get_passport_db()
+        record = db.get_by_passport_number(passport_number)
+        
+        if not record:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Passport with number '{passport_number}' not found"
+            )
+        
+        return PassportRecord(**record)
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.delete("/id-cards/{record_id}")
+async def delete_id_card(record_id: int):
+    """
+    Delete an ID card record by its database ID.
+    """
+    try:
+        db = get_id_card_db()
+        deleted = db.delete(record_id)
+        
+        if not deleted:
+            raise HTTPException(
+                status_code=404,
+                detail=f"ID card record with ID {record_id} not found"
+            )
+        
+        return {"success": True, "message": f"Deleted record {record_id}"}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.delete("/passports/{record_id}")
+async def delete_passport(record_id: int):
+    """
+    Delete a passport record by its database ID.
+    """
+    try:
+        db = get_passport_db()
+        deleted = db.delete(record_id)
+        
+        if not deleted:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Passport record with ID {record_id} not found"
+            )
+        
+        return {"success": True, "message": f"Deleted record {record_id}"}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

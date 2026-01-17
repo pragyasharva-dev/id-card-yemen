@@ -134,8 +134,12 @@ def extract_name_from_texts(texts: List[str], text_results: List[Dict]) -> Tuple
         word_count = len(text.split())
         # Avoid texts that are mostly numbers
         digit_ratio = sum(c.isdigit() for c in text) / max(len(text), 1)
-        # Avoid common label keywords
-        label_keywords = ['name', 'الاسم', 'address', 'العنوان', 'id', 'رقم']
+        # Avoid common label keywords (including field labels from ID cards)
+        label_keywords = [
+            'name', 'الاسم', 'address', 'العنوان', 'id', 'رقم',
+            'مكان', 'تاريخ', 'الميلاد', 'وتاريخ', 'ونريخ',  # Place/Date/Birth labels
+            'date', 'birth', 'place', 'gender', 'الجنس'
+        ]
         has_label = any(kw in text.lower() for kw in label_keywords)
         
         return (word_count >= 2 or (len(text) > 5 and digit_ratio < 0.3)) and not has_label
@@ -201,65 +205,85 @@ def extract_gender_from_texts(texts: List[str], text_results: List[Dict]) -> Opt
     return None
 
 
-def extract_address_from_texts(texts: List[str], text_results: List[Dict]) -> Optional[str]:
+def extract_place_of_birth(texts: List[str]) -> Optional[str]:
     """
-    Extract address from OCR texts using NER with keyword-based fallback.
+    Extract Place of Birth from FRONT card OCR texts.
+    Logic: Look for text on the same line as the Date of Birth (YYYY/MM/DD).
+           The text might be AFTER the date (standard) or BEFORE (if OCR flips RTL).
     
     Args:
-        texts: List of all extracted texts
-        text_results: Detailed text results
+        texts: List of OCR extracted texts
         
     Returns:
-        Address in English (translated from Arabic if needed)
+        Place of Birth in English (translated)
     """
-    from services.ner_extractor import get_ner_extractor, is_ner_available
+    # Pattern for DOB: YYYY/MM/DD or YYYY-MM-DD or YYYY.MM.DD (allow spaces)
+    date_pattern = r'(\d{4}\s*[./-]\s*\d{1,2}\s*[./-]\s*\d{1,2})'
     
-    # Try NER-based extraction first
-    if is_ner_available():
-        try:
-            ner = get_ner_extractor()
-            address = ner.extract_locations(text_results)
+    print("DEBUG: Starting Place of Birth extraction...")
+    
+    # Helper to validate Arabic text quality
+    def is_valid_arabic_text(text: str) -> bool:
+        # Must contain valid Arabic content
+        if not text:
+            return False
             
-            if address:
-                return address
-        except Exception as e:
-            print(f"NER address extraction failed: {e}, falling back to keywords")
-    
-    # Fallback to keyword-based extraction
-    # Look for address-related keywords in Arabic
-    address_keywords = ['عنوان', 'محافظة', 'مديرية', 'address']
-    
-    # Find texts that might contain address
-    address_candidates = []
-    
-    for i, text in enumerate(texts):
-        text_lower = text.lower()
+        # Count total Arabic characters
+        arabic_chars = len(re.findall(r'[\u0600-\u06FF]', text))
         
-        # Check if this text contains address keyword
-        for keyword in address_keywords:
-            if keyword in text_lower:
-                # The address might be in the next text or the same text
-                if i + 1 < len(texts):
-                    address_candidates.append(texts[i + 1])
-                # Check if address is in the same text after the keyword
-                parts = text.split()
-                for j, part in enumerate(parts):
-                    if keyword in part.lower() and j + 1 < len(parts):
-                        address_candidates.append(' '.join(parts[j+1:]))
-    
-    # Also look for longer Arabic texts that might be addresses
-    for item in text_results:
-        if item.get('detected_language') == 'ar':
-            text = item['text']
-            # Addresses are usually longer and contain specific characters
-            if len(text) > 10 and any(char in text for char in ['،', ',', '.']):
-                address_candidates.append(text)
-    
-    # Return the first candidate, translated to English
-    if address_candidates:
-        arabic_address = address_candidates[0]
-        return translate_text(arabic_address, source="ar", target="en")
-    
+        # If we have at least 3 Arabic characters total, it's likely valid
+        # even if they are spaced out (e.g. "ص ن ع ا ء")
+        if arabic_chars >= 2:
+            return True
+            
+        return False
+
+    for i, text in enumerate(texts):
+        # clean cleanup the text
+        clean_text = text.strip()
+        match = re.search(date_pattern, clean_text)
+        
+        if match:
+            print(f"DEBUG: Found DOB pattern in line: '{clean_text}'")
+            
+            # Strategy 1: Check text AFTER date (Standard user description)
+            date_end_index = match.end()
+            remainder_after = clean_text[date_end_index:].strip()
+            cleaned_after = re.sub(r'^[-_.\s،,]+', '', remainder_after).strip()
+            
+            if len(cleaned_after) > 2:
+                if is_valid_arabic_text(cleaned_after):
+                    print(f"DEBUG: Found place AFTER date: '{cleaned_after}'")
+                    return translate_text(cleaned_after, source="ar", target="en")
+                else:
+                     print(f"DEBUG: Rejected text AFTER date (invalid Arabic): '{cleaned_after}'")
+            
+            # Strategy 2: Check text BEFORE date (Fallback for RTL/OCR issues)
+            date_start_index = match.start()
+            remainder_before = clean_text[:date_start_index].strip()
+            cleaned_before = re.sub(r'[-_.\s،,]+$', '', remainder_before).strip()
+            
+            if len(cleaned_before) > 2:
+                if is_valid_arabic_text(cleaned_before):
+                    print(f"DEBUG: Found place BEFORE date: '{cleaned_before}'")
+                    return translate_text(cleaned_before, source="ar", target="en")
+                else:
+                    print(f"DEBUG: Rejected text BEFORE date (invalid Arabic): '{cleaned_before}'")
+
+            # Strategy 3: Check immediate next line (Split line case)
+            if i + 1 < len(texts):
+                next_text = texts[i+1].strip()
+                cleaned_next = re.sub(r'^[-_.\s،,]+', '', next_text).strip()
+                
+                # Verify it's not another date or noise
+                if len(cleaned_next) > 2 and not re.search(date_pattern, cleaned_next):
+                     if is_valid_arabic_text(cleaned_next):
+                         print(f"DEBUG: Found place on NEXT line: '{cleaned_next}'")
+                         return translate_text(cleaned_next, source="ar", target="en")
+                     else:
+                         print(f"DEBUG: Ignored next line content (invalid Arabic): '{cleaned_next}'")
+                
+    print("DEBUG: No Place of Birth found.")
     return None
 
 
@@ -405,19 +429,17 @@ def parse_yemen_id_card(
     arabic_name, english_name = extract_name_from_texts(front_texts, filtered_front_results)
     date_of_birth = extract_date_of_birth(front_texts)
     gender = extract_gender_from_texts(front_texts, front_text_results)
+    place_of_birth = extract_place_of_birth(front_texts)
     
     # Initialize back card fields
-    address = None
     issuance_date = None
     expiry_date = None
     
     # Extract from BACK card if provided
     if back_ocr_result:
         back_texts = back_ocr_result.get("all_texts", [])
-        back_text_results = back_ocr_result.get("text_results", [])
         
         # Extract fields from BACK
-        address = extract_address_from_texts(back_texts, back_text_results)
         issuance_date, expiry_date = extract_dates_from_texts(back_texts)
     
     return {
@@ -425,7 +447,7 @@ def parse_yemen_id_card(
         "name_english": english_name,
         "date_of_birth": date_of_birth,
         "gender": gender,
-        "address": address,
+        "place_of_birth": place_of_birth,
         "issuance_date": issuance_date,
         "expiry_date": expiry_date,
         "id_number": front_ocr_result.get("extracted_id"),
@@ -449,12 +471,14 @@ def filter_organization_names(text_results: List[Dict]) -> List[Dict]:
     Returns:
         Filtered text results without organization names
     """
-    # Keywords that indicate organization/government names
+    # Keywords that indicate organization/government names OR field labels
     org_keywords = [
         'مصلحة', 'الأحوال', 'المدنية', 'السجل', 'المدني',
         'الجمهورية', 'اليمنية', 'وزارة', 'ministry',
         'authority', 'republic', 'civil', 'registry',
-        'government', 'حكومة', 'دولة'
+        'government', 'حكومة', 'دولة',
+        'مكان', 'تاريخ', 'الميلاد', 'وتاريخ', 'ونريخ',  # Field labels
+        'date', 'birth', 'place'
     ]
     
     filtered_results = []
