@@ -7,6 +7,7 @@ Provides endpoints for:
 - /compare-faces: Compare two face images
 - /translate: Translate Arabic texts to English
 - /process-batch: Batch process ID cards
+- /submit-id-form: Submit and validate ID card form data
 - /health: Health check
 """
 import cv2
@@ -20,7 +21,8 @@ from models.schemas import (
     CompareFacesRequest, CompareFacesResponse,
     BatchProcessRequest, BatchProcessResponse,
     HealthResponse, OCRResult, FaceMatchResult,
-    TranslateRequest, TranslateResponse, TranslatedText
+    TranslateRequest, TranslateResponse, TranslatedText,
+    IDFormSubmitRequest, IDFormSubmitResponse
 )
 from services.ocr_service import extract_id_from_image, get_ocr_service
 from services.face_recognition import verify_identity, compare_faces, is_ready as face_ready
@@ -476,3 +478,104 @@ async def translate_texts_endpoint(request: TranslateRequest):
             translations=[],
             error=str(e)
         )
+
+
+@router.post("/submit-id-form", response_model=IDFormSubmitResponse)
+async def submit_id_form_endpoint(request: IDFormSubmitRequest):
+    """
+    Submit ID card form data with comprehensive production-level validation.
+    
+    Validates form data based on ID type (yemen_national_id or yemen_passport).
+    Applies hard-coded validation rules including:
+    - Name: Alphabets (English/Arabic), spaces, hyphens only
+    - Dates: YYYY-MM-DD format with realistic range checking
+    - ID numbers: Regex pattern validation (11 digits for National ID, 8 for Passport)
+    - Cross-field validation (e.g., expiry after issuance)
+    
+    Note: This is backend validation only - no OCR or image processing.
+    """
+    try:
+        from models.form_validators import (
+            YemenNationalIDForm,
+            YemenPassportForm,
+            IDFormValidationError
+        )
+        
+        # Prepare data for validation based on ID type
+        form_data = {
+            "name_arabic": request.name_arabic,
+            "name_english": request.name_english,
+            "date_of_birth": request.date_of_birth,
+            "gender": request.gender,
+            "place_of_birth": request.place_of_birth,
+            "issuance_date": request.issuance_date,
+            "expiry_date": request.expiry_date,
+        }
+        
+        # Validate based on ID type
+        if request.id_type == "yemen_national_id":
+            form_data["id_number"] = request.id_number
+            
+            # Validate with YemenNationalIDForm
+            validated_form = YemenNationalIDForm(**form_data)
+            
+            return IDFormSubmitResponse(
+                success=True,
+                message="Yemen National ID form validated successfully",
+                errors=None,
+                validated_data=validated_form.model_dump()
+            )
+        
+        elif request.id_type == "yemen_passport":
+            form_data["passport_number"] = request.passport_number
+            
+            # Validate with YemenPassportForm
+            validated_form = YemenPassportForm(**form_data)
+            
+            return IDFormSubmitResponse(
+                success=True,
+                message="Yemen Passport form validated successfully",
+                errors=None,
+                validated_data=validated_form.model_dump()
+            )
+        
+        else:
+            return IDFormSubmitResponse(
+                success=False,
+                message=f"Invalid id_type: {request.id_type}",
+                errors=[IDFormValidationError(
+                    field="id_type",
+                    message=f"id_type must be 'yemen_national_id' or 'yemen_passport', got '{request.id_type}'"
+                )],
+                validated_data=None
+            )
+            
+    except Exception as e:
+        # Parse Pydantic validation errors
+        if hasattr(e, 'errors'):
+            # Pydantic ValidationError
+            error_list = []
+            for error in e.errors():
+                field_path = '.'.join(str(loc) for loc in error['loc'])
+                error_list.append(IDFormValidationError(
+                    field=field_path,
+                    message=error['msg']
+                ))
+            
+            return IDFormSubmitResponse(
+                success=False,
+                message="Form validation failed",
+                errors=error_list,
+                validated_data=None
+            )
+        else:
+            # Other exceptions
+            return IDFormSubmitResponse(
+                success=False,
+                message=f"Validation error: {str(e)}",
+                errors=[IDFormValidationError(
+                    field="general",
+                    message=str(e)
+                )],
+                validated_data=None
+            )
