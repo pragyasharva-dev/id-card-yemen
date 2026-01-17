@@ -4,6 +4,15 @@ Pydantic models for API request/response schemas.
 from typing import Optional, List
 from pydantic import BaseModel, Field
 
+# Import form validators for ID card data entry
+from models.form_validators import (
+    YemenNationalIDForm,
+    YemenPassportForm,
+    IDFormSubmitRequest,
+    IDFormSubmitResponse,
+    IDFormValidationError
+)
+
 
 class VerifyRequest(BaseModel):
     """Request model for the /verify endpoint."""
@@ -247,4 +256,36 @@ class TranslateResponse(BaseModel):
         description="List of translation results"
     )
     error: Optional[str] = Field(None, description="Error message if translation failed")
+
+
+# Place of Birth Validation Schemas
+class PlaceOfBirthNormalized(BaseModel):
+    """Normalized place of birth components."""
+    district: Optional[str] = Field(None, description="Identified district")
+    governorate: Optional[str] = Field(None, description="Identified governorate")
+
+
+class PlaceOfBirthData(BaseModel):
+    """
+    Place of Birth validation result.
+    
+    Low-severity field - NEVER causes auto-rejection.
+    At most, marks for manual review.
+    """
+    ocr_raw: Optional[str] = Field(None, description="Raw OCR extracted text")
+    user_input: Optional[str] = Field(None, description="User-provided place of birth")
+    normalized: Optional[PlaceOfBirthNormalized] = Field(
+        None,
+        description="Normalized governorate and district components"
+    )
+    ocr_confidence: float = Field(0.0, description="OCR confidence score (0-1)")
+    matching_score: float = Field(
+        0.0,
+        description="Token matching score (0-1), weighted by governorate/district"
+    )
+    decision: Literal["pass", "manual_review"] = Field(
+        "manual_review",
+        description="Validation decision - NEVER 'reject'"
+    )
+    reason: Optional[str] = Field(None, description="Explanation for the decision")
 
