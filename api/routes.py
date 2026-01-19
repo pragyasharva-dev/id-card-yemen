@@ -470,13 +470,12 @@ async def translate_texts_endpoint(request: TranslateRequest):
             success=True,
             translations=translations,
             error=None
-        )
+            )
         
     except Exception as e:
-        return TranslateResponse(
-            success=False,
-            translations=[],
-            error=str(e)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Translation failed: {str(e)}"
         )
 
 
@@ -506,7 +505,6 @@ async def submit_id_form_endpoint(request: IDFormSubmitRequest):
             "name_arabic": request.name_arabic,
             "name_english": request.name_english,
             "date_of_birth": request.date_of_birth,
-            "gender": request.gender,
             "place_of_birth": request.place_of_birth,
             "issuance_date": request.issuance_date,
             "expiry_date": request.expiry_date,
@@ -515,6 +513,7 @@ async def submit_id_form_endpoint(request: IDFormSubmitRequest):
         # Validate based on ID type
         if request.id_type == "yemen_national_id":
             form_data["id_number"] = request.id_number
+            # Do NOT include gender - it will be auto-derived from ID number
             
             # Validate with YemenNationalIDForm
             validated_form = YemenNationalIDForm(**form_data)
@@ -528,6 +527,7 @@ async def submit_id_form_endpoint(request: IDFormSubmitRequest):
         
         elif request.id_type == "yemen_passport":
             form_data["passport_number"] = request.passport_number
+            form_data["gender"] = request.gender  # Gender is required for passport
             
             # Validate with YemenPassportForm
             validated_form = YemenPassportForm(**form_data)
