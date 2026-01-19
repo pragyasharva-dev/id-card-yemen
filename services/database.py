@@ -241,9 +241,10 @@ class YemenIDCardDB(BaseDatabase):
             "id", "national_id",
             "first_name_arabic", "middle_name_arabic", "last_name_arabic",
             "first_name_english", "middle_name_english", "last_name_english",
-            "date_of_birth", "gender", "nationality", "address", "governorate",
+            "date_of_birth", "place_of_birth", "gender",
             "issuance_date", "expiry_date",
-            "front_image_path", "back_image_path", "created_at"
+            "front_image_blob", "back_image_blob", "selfie_image_blob",
+            "created_at"
         ]
     
     def _create_table(self):
@@ -261,14 +262,13 @@ class YemenIDCardDB(BaseDatabase):
                     middle_name_english TEXT,
                     last_name_english TEXT,
                     date_of_birth TEXT,
+                    place_of_birth TEXT,
                     gender TEXT,
-                    nationality TEXT DEFAULT 'Yemeni',
-                    address TEXT,
-                    governorate TEXT,
                     issuance_date TEXT,
                     expiry_date TEXT,
-                    front_image_path TEXT,
-                    back_image_path TEXT,
+                    front_image_blob BLOB,
+                    back_image_blob BLOB,
+                    selfie_image_blob BLOB,
                     created_at TEXT DEFAULT CURRENT_TIMESTAMP
                 )
             """)
@@ -286,7 +286,8 @@ class YemenIDCardDB(BaseDatabase):
                 - name_arabic (will be split into first/middle/last)
                 - name_english (will be split into first/middle/last)
                 - Or individual first_name_*, middle_name_*, last_name_* fields
-                - date_of_birth, gender, nationality, address, etc.
+                - date_of_birth, place_of_birth, gender, etc.
+                - front_image_blob, back_image_blob, selfie_image_blob (bytes)
                 
         Returns:
             The inserted record ID
@@ -306,23 +307,26 @@ class YemenIDCardDB(BaseDatabase):
         
         conn = self._get_connection()
         try:
+            # Use local time for created_at instead of SQLite's UTC CURRENT_TIMESTAMP
+            local_timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             cursor = conn.execute("""
                 INSERT INTO id_cards (
                     national_id, 
                     first_name_arabic, middle_name_arabic, last_name_arabic,
                     first_name_english, middle_name_english, last_name_english,
-                    date_of_birth, gender, nationality, address, governorate,
+                    date_of_birth, place_of_birth, gender,
                     issuance_date, expiry_date,
-                    front_image_path, back_image_path
+                    front_image_blob, back_image_blob, selfie_image_blob,
+                    created_at
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 data.get("national_id"),
                 data.get("first_name_arabic"), data.get("middle_name_arabic"), data.get("last_name_arabic"),
                 data.get("first_name_english"), data.get("middle_name_english"), data.get("last_name_english"),
-                data.get("date_of_birth"), data.get("gender"), data.get("nationality", "Yemeni"),
-                data.get("address"), data.get("governorate"),
+                data.get("date_of_birth"), data.get("place_of_birth"), data.get("gender"),
                 data.get("issuance_date"), data.get("expiry_date"),
-                data.get("front_image_path"), data.get("back_image_path")
+                data.get("front_image_blob"), data.get("back_image_blob"), data.get("selfie_image_blob"),
+                local_timestamp
             ))
             conn.commit()
             return cursor.lastrowid
@@ -364,8 +368,9 @@ class YemenIDCardDB(BaseDatabase):
         allowed_fields = [
             "first_name_arabic", "middle_name_arabic", "last_name_arabic",
             "first_name_english", "middle_name_english", "last_name_english",
-            "date_of_birth", "gender", "nationality", "address", "governorate",
-            "issuance_date", "expiry_date", "front_image_path", "back_image_path"
+            "date_of_birth", "place_of_birth", "gender",
+            "issuance_date", "expiry_date",
+            "front_image_blob", "back_image_blob", "selfie_image_blob"
         ]
         
         for field in allowed_fields:
@@ -404,9 +409,11 @@ class YemenPassportDB(BaseDatabase):
             "id", "passport_number",
             "first_name_arabic", "middle_name_arabic", "last_name_arabic",
             "first_name_english", "middle_name_english", "last_name_english",
-            "date_of_birth", "place_of_birth", "gender", "nationality",
+            "date_of_birth", "place_of_birth", "gender",
             "passport_type", "issuance_date", "expiry_date", "issuing_authority",
-            "mrz_line_1", "mrz_line_2", "image_path", "created_at"
+            "mrz_line_1", "mrz_line_2",
+            "front_image_blob", "back_image_blob", "selfie_image_blob",
+            "created_at"
         ]
     
     def _create_table(self):
@@ -426,14 +433,15 @@ class YemenPassportDB(BaseDatabase):
                     date_of_birth TEXT,
                     place_of_birth TEXT,
                     gender TEXT,
-                    nationality TEXT DEFAULT 'Yemeni',
                     passport_type TEXT DEFAULT 'Ordinary',
                     issuance_date TEXT,
                     expiry_date TEXT,
                     issuing_authority TEXT,
                     mrz_line_1 TEXT,
                     mrz_line_2 TEXT,
-                    image_path TEXT,
+                    front_image_blob BLOB,
+                    back_image_blob BLOB,
+                    selfie_image_blob BLOB,
                     created_at TEXT DEFAULT CURRENT_TIMESTAMP
                 )
             """)
@@ -471,26 +479,30 @@ class YemenPassportDB(BaseDatabase):
         
         conn = self._get_connection()
         try:
+            # Use local time for created_at instead of SQLite's UTC CURRENT_TIMESTAMP
+            local_timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             cursor = conn.execute("""
                 INSERT INTO passports (
                     passport_number,
                     first_name_arabic, middle_name_arabic, last_name_arabic,
                     first_name_english, middle_name_english, last_name_english,
-                    date_of_birth, place_of_birth, gender, nationality,
+                    date_of_birth, place_of_birth, gender,
                     passport_type, issuance_date, expiry_date, issuing_authority,
-                    mrz_line_1, mrz_line_2, image_path
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    mrz_line_1, mrz_line_2,
+                    front_image_blob, back_image_blob, selfie_image_blob,
+                    created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 data.get("passport_number"),
                 data.get("first_name_arabic"), data.get("middle_name_arabic"), data.get("last_name_arabic"),
                 data.get("first_name_english"), data.get("middle_name_english"), data.get("last_name_english"),
-                data.get("date_of_birth"), data.get("place_of_birth"),
-                data.get("gender"), data.get("nationality", "Yemeni"),
+                data.get("date_of_birth"), data.get("place_of_birth"), data.get("gender"),
                 data.get("passport_type", "Ordinary"),
                 data.get("issuance_date"), data.get("expiry_date"),
                 data.get("issuing_authority"),
                 data.get("mrz_line_1"), data.get("mrz_line_2"),
-                data.get("image_path")
+                data.get("front_image_blob"), data.get("back_image_blob"), data.get("selfie_image_blob"),
+                local_timestamp
             ))
             conn.commit()
             return cursor.lastrowid
@@ -532,9 +544,10 @@ class YemenPassportDB(BaseDatabase):
         allowed_fields = [
             "first_name_arabic", "middle_name_arabic", "last_name_arabic",
             "first_name_english", "middle_name_english", "last_name_english",
-            "date_of_birth", "place_of_birth", "gender", "nationality",
+            "date_of_birth", "place_of_birth", "gender",
             "passport_type", "issuance_date", "expiry_date", "issuing_authority",
-            "mrz_line_1", "mrz_line_2", "image_path"
+            "mrz_line_1", "mrz_line_2",
+            "front_image_blob", "back_image_blob", "selfie_image_blob"
         ]
         
         for field in allowed_fields:
