@@ -53,9 +53,9 @@ class YemenNationalIDForm(BaseModel):
         description="Date of birth in YYYY-MM-DD format"
     )
     
-    gender: Literal["Male", "Female"] = Field(
-        ...,
-        description="Gender - must be 'Male' or 'Female'"
+    gender: Optional[Literal["Male", "Female"]] = Field(
+        None,
+        description="Gender - AUTO-DERIVED from 4th digit of ID number (do not input manually)"
     )
     
     # Optional fields
@@ -100,14 +100,16 @@ class YemenNationalIDForm(BaseModel):
         Auto-derive gender from 4th digit of Yemen National ID number.
         
         Logic: 
-        - 4th digit (index 3) determines gender (BINARY ONLY)
-        - 0 = Female
-        - 1 = Male
+        - If gender is already provided manually, keep it
+        - If gender is NOT provided, auto-derive from 4th digit (BINARY ONLY)
+          - 0 = Female
+          - 1 = Male
         
         Yemen National ID cards do NOT have pre-written gender on the physical card.
         The 4th digit MUST be 0 or 1 only.
         """
-        if self.id_number and len(self.id_number) >= 4:
+        # Only auto-derive if gender is not already provided
+        if self.gender is None and self.id_number and len(self.id_number) >= 4:
             fourth_digit = int(self.id_number[3])  # 4th digit (0-indexed)
             
             # Strict binary check
@@ -347,11 +349,29 @@ class YemenPassportForm(BaseModel):
         
         return v
     
-    # Reuse validators from YemenNationalIDForm
-    validate_name = YemenNationalIDForm.validate_name
-    validate_place_of_birth = YemenNationalIDForm.validate_place_of_birth
-    validate_date_format = YemenNationalIDForm.validate_date_format
-    validate_date_logic = YemenNationalIDForm.validate_date_logic
+    # Copy validators from YemenNationalIDForm with proper decorators
+    @field_validator('name_arabic', 'name_english')
+    @classmethod
+    def validate_name(cls, v: str, info) -> str:
+        """Validate name fields: alphabets (English/Arabic), spaces, hyphens only."""
+        return YemenNationalIDForm.validate_name.__func__(cls, v, info)
+    
+    @field_validator('place_of_birth')
+    @classmethod
+    def validate_place_of_birth(cls, v: Optional[str]) -> Optional[str]:
+        """Validate place of birth: alphabets, spaces, hyphens, commas only."""
+        return YemenNationalIDForm.validate_place_of_birth.__func__(cls, v)
+    
+    @field_validator('date_of_birth', 'issuance_date', 'expiry_date')
+    @classmethod
+    def validate_date_format(cls, v: Optional[str], info) -> Optional[str]:
+        """Validate date fields: YYYY-MM-DD format with realistic range checking."""
+        return YemenNationalIDForm.validate_date_format.__func__(cls, v, info)
+    
+    @model_validator(mode='after')
+    def validate_date_logic(self):
+        """Validate logical relationships between dates."""
+        return YemenNationalIDForm.validate_date_logic(self)
 
 
 class IDFormSubmitRequest(BaseModel):
@@ -386,10 +406,10 @@ class IDFormSubmitRequest(BaseModel):
     name_english: str = Field(..., description="Full name in English")
     date_of_birth: str = Field(..., description="Date of birth (YYYY-MM-DD)")
     
-    # Gender: Optional for National ID (auto-derived), Required for Passport
+    # Gender: Optional for National ID (manual or auto-derived), Required for Passport
     gender: Optional[Literal["Male", "Female"]] = Field(
         None, 
-        description="Gender - REQUIRED for passport, IGNORED for national ID (auto-derived from ID number)"
+        description="Gender - REQUIRED for passport, OPTIONAL for national ID (can be provided manually or auto-derived from ID number)"
     )
     
     place_of_birth: Optional[str] = Field(None, description="Place of birth")
@@ -404,12 +424,8 @@ class IDFormSubmitRequest(BaseModel):
                 raise ValueError(
                     "id_number is required when id_type is 'yemen_national_id'"
                 )
-            # Gender should NOT be provided for National ID (auto-derived)
-            if self.gender is not None:
-                raise ValueError(
-                    "gender should NOT be provided for yemen_national_id. "
-                    "It is automatically derived from the 4th digit of the ID number."
-                )
+            # Gender is optional for National ID (can be manual or auto-derived)
+            # No validation needed here
                 
         elif self.id_type == "yemen_passport":
             if not self.passport_number:

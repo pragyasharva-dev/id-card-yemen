@@ -1,7 +1,7 @@
 """
 Pydantic models for API request/response schemas.
 """
-from typing import Optional, List
+from typing import Optional, List, Literal
 from pydantic import BaseModel, Field
 
 # Import form validators for ID card data entry
@@ -288,4 +288,44 @@ class PlaceOfBirthData(BaseModel):
         description="Validation decision - NEVER 'reject'"
     )
     reason: Optional[str] = Field(None, description="Explanation for the decision")
+
+
+# Name Matching Schemas
+class NameComparison(BaseModel):
+    """Result of comparing a single name (Arabic or English)."""
+    ocr_normalized: str = Field(..., description="Normalized OCR name")
+    user_normalized: str = Field(..., description="Normalized user name")
+    exact_match: bool = Field(..., description="Whether names match exactly after normalization")
+    similarity_score: float = Field(..., description="String similarity score (0-1)")
+    token_overlap: float = Field(..., description="Token overlap score (0-1)")
+    final_score: float = Field(..., description="Weighted final score")
+
+
+class NameMatchingResult(BaseModel):
+    """
+    Name matching validation result.
+    
+    High-severity field - Low scores may cause rejection.
+    """
+    arabic_comparison: Optional[NameComparison] = Field(
+        None,
+        description="Arabic name comparison results"
+    )
+    english_comparison: Optional[NameComparison] = Field(
+        None,
+        description="English name comparison results"
+    )
+    combined_score: float = Field(
+        0.0,
+        description="Combined score from both languages"
+    )
+    final_score: float = Field(
+        0.0,
+        description="Final score after OCR confidence multiplier"
+    )
+    decision: Literal["pass", "manual_review", "reject"] = Field(
+        "manual_review",
+        description="Validation decision - MAY reject on low scores (high severity)"
+    )
+    reason: str = Field(..., description="Explanation for the decision")
 

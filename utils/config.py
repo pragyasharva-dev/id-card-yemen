@@ -80,3 +80,10 @@ PLACE_OF_BIRTH_ENABLED = True
 PLACE_OF_BIRTH_PASS_THRESHOLD = 0.70  # Score >= 0.70 → pass
 PLACE_OF_BIRTH_MANUAL_THRESHOLD = 0.40  # Score < 0.70 → manual review
 # NOTE: No reject threshold - this field NEVER causes auto-rejection
+
+# Name Matching Settings
+# High-severity field - Low scores may cause rejection
+NAME_MATCHING_ENABLED = True
+NAME_MATCHING_PASS_THRESHOLD = 0.90  # Score >= 0.90 → pass
+NAME_MATCHING_MANUAL_THRESHOLD = 0.70  # Score < 0.70 → may reject
+# NOTE: High severity - scores below manual_threshold may cause rejection
