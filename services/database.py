@@ -241,7 +241,7 @@ class YemenIDCardDB(BaseDatabase):
             "id", "national_id",
             "first_name_arabic", "middle_name_arabic", "last_name_arabic",
             "first_name_english", "middle_name_english", "last_name_english",
-            "date_of_birth", "place_of_birth", "gender",
+            "date_of_birth", "place_of_birth", "gender", "blood_group",
             "issuance_date", "expiry_date",
             "front_image_blob", "back_image_blob", "selfie_image_blob",
             "created_at"
@@ -264,6 +264,7 @@ class YemenIDCardDB(BaseDatabase):
                     date_of_birth TEXT,
                     place_of_birth TEXT,
                     gender TEXT,
+                    blood_group TEXT,
                     issuance_date TEXT,
                     expiry_date TEXT,
                     front_image_blob BLOB,
@@ -314,16 +315,16 @@ class YemenIDCardDB(BaseDatabase):
                     national_id, 
                     first_name_arabic, middle_name_arabic, last_name_arabic,
                     first_name_english, middle_name_english, last_name_english,
-                    date_of_birth, place_of_birth, gender,
+                    date_of_birth, place_of_birth, gender, blood_group,
                     issuance_date, expiry_date,
                     front_image_blob, back_image_blob, selfie_image_blob,
                     created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 data.get("national_id"),
                 data.get("first_name_arabic"), data.get("middle_name_arabic"), data.get("last_name_arabic"),
                 data.get("first_name_english"), data.get("middle_name_english"), data.get("last_name_english"),
-                data.get("date_of_birth"), data.get("place_of_birth"), data.get("gender"),
+                data.get("date_of_birth"), data.get("place_of_birth"), data.get("gender"), data.get("blood_group"),
                 data.get("issuance_date"), data.get("expiry_date"),
                 data.get("front_image_blob"), data.get("back_image_blob"), data.get("selfie_image_blob"),
                 local_timestamp
@@ -368,7 +369,7 @@ class YemenIDCardDB(BaseDatabase):
         allowed_fields = [
             "first_name_arabic", "middle_name_arabic", "last_name_arabic",
             "first_name_english", "middle_name_english", "last_name_english",
-            "date_of_birth", "place_of_birth", "gender",
+            "date_of_birth", "place_of_birth", "gender", "blood_group",
             "issuance_date", "expiry_date",
             "front_image_blob", "back_image_blob", "selfie_image_blob"
         ]
@@ -407,12 +408,13 @@ class YemenPassportDB(BaseDatabase):
     def get_columns(self) -> List[str]:
         return [
             "id", "passport_number",
-            "first_name_arabic", "middle_name_arabic", "last_name_arabic",
-            "first_name_english", "middle_name_english", "last_name_english",
-            "date_of_birth", "place_of_birth", "gender",
+            "surname_arabic", "given_names_arabic",
+            "surname_english", "given_names_english",
+            "profession",
+            "date_of_birth", "place_of_birth", "gender", "blood_group",
             "passport_type", "issuance_date", "expiry_date", "issuing_authority",
             "mrz_line_1", "mrz_line_2",
-            "front_image_blob", "back_image_blob", "selfie_image_blob",
+            "passport_image_blob", "selfie_image_blob",
             "created_at"
         ]
     
@@ -424,23 +426,22 @@ class YemenPassportDB(BaseDatabase):
                 CREATE TABLE IF NOT EXISTS passports (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     passport_number TEXT UNIQUE NOT NULL,
-                    first_name_arabic TEXT,
-                    middle_name_arabic TEXT,
-                    last_name_arabic TEXT,
-                    first_name_english TEXT,
-                    middle_name_english TEXT,
-                    last_name_english TEXT,
+                    surname_arabic TEXT,
+                    given_names_arabic TEXT,
+                    surname_english TEXT,
+                    given_names_english TEXT,
+                    profession TEXT,
                     date_of_birth TEXT,
                     place_of_birth TEXT,
                     gender TEXT,
+                    blood_group TEXT,
                     passport_type TEXT DEFAULT 'Ordinary',
                     issuance_date TEXT,
                     expiry_date TEXT,
                     issuing_authority TEXT,
                     mrz_line_1 TEXT,
                     mrz_line_2 TEXT,
-                    front_image_blob BLOB,
-                    back_image_blob BLOB,
+                    passport_image_blob BLOB,
                     selfie_image_blob BLOB,
                     created_at TEXT DEFAULT CURRENT_TIMESTAMP
                 )
@@ -456,27 +457,14 @@ class YemenPassportDB(BaseDatabase):
         Args:
             data: Dictionary with passport data. Can include:
                 - passport_number (required)
-                - name_arabic (will be split into first/middle/last)
-                - name_english (will be split into first/middle/last)
-                - Or individual first_name_*, middle_name_*, last_name_* fields
-                - date_of_birth, place_of_birth, gender, nationality, etc.
+                - surname_arabic, given_names_arabic
+                - surname_english, given_names_english
+                - profession
+                - date_of_birth, place_of_birth, gender, blood_group, etc.
                 
         Returns:
             The inserted record ID
         """
-        # Parse names if provided as full names
-        if "name_arabic" in data:
-            name_parts = split_name(data["name_arabic"], is_arabic=True)
-            data["first_name_arabic"] = name_parts["first_name"]
-            data["middle_name_arabic"] = name_parts["middle_name"]
-            data["last_name_arabic"] = name_parts["last_name"]
-        
-        if "name_english" in data:
-            name_parts = split_name(data["name_english"], is_arabic=False)
-            data["first_name_english"] = name_parts["first_name"]
-            data["middle_name_english"] = name_parts["middle_name"]
-            data["last_name_english"] = name_parts["last_name"]
-        
         conn = self._get_connection()
         try:
             # Use local time for created_at instead of SQLite's UTC CURRENT_TIMESTAMP
@@ -484,24 +472,26 @@ class YemenPassportDB(BaseDatabase):
             cursor = conn.execute("""
                 INSERT INTO passports (
                     passport_number,
-                    first_name_arabic, middle_name_arabic, last_name_arabic,
-                    first_name_english, middle_name_english, last_name_english,
-                    date_of_birth, place_of_birth, gender,
+                    surname_arabic, given_names_arabic,
+                    surname_english, given_names_english,
+                    profession,
+                    date_of_birth, place_of_birth, gender, blood_group,
                     passport_type, issuance_date, expiry_date, issuing_authority,
                     mrz_line_1, mrz_line_2,
-                    front_image_blob, back_image_blob, selfie_image_blob,
+                    passport_image_blob, selfie_image_blob,
                     created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 data.get("passport_number"),
-                data.get("first_name_arabic"), data.get("middle_name_arabic"), data.get("last_name_arabic"),
-                data.get("first_name_english"), data.get("middle_name_english"), data.get("last_name_english"),
-                data.get("date_of_birth"), data.get("place_of_birth"), data.get("gender"),
+                data.get("surname_arabic"), data.get("given_names_arabic"),
+                data.get("surname_english"), data.get("given_names_english"),
+                data.get("profession"),
+                data.get("date_of_birth"), data.get("place_of_birth"), data.get("gender"), data.get("blood_group"),
                 data.get("passport_type", "Ordinary"),
                 data.get("issuance_date"), data.get("expiry_date"),
                 data.get("issuing_authority"),
                 data.get("mrz_line_1"), data.get("mrz_line_2"),
-                data.get("front_image_blob"), data.get("back_image_blob"), data.get("selfie_image_blob"),
+                data.get("passport_image_blob"), data.get("selfie_image_blob"),
                 local_timestamp
             ))
             conn.commit()
@@ -524,30 +514,18 @@ class YemenPassportDB(BaseDatabase):
     
     def update(self, passport_number: str, data: Dict[str, Any]) -> bool:
         """Update an existing passport record by passport number."""
-        # Parse names if provided as full names
-        if "name_arabic" in data:
-            name_parts = split_name(data["name_arabic"], is_arabic=True)
-            data["first_name_arabic"] = name_parts["first_name"]
-            data["middle_name_arabic"] = name_parts["middle_name"]
-            data["last_name_arabic"] = name_parts["last_name"]
-        
-        if "name_english" in data:
-            name_parts = split_name(data["name_english"], is_arabic=False)
-            data["first_name_english"] = name_parts["first_name"]
-            data["middle_name_english"] = name_parts["middle_name"]
-            data["last_name_english"] = name_parts["last_name"]
-        
         # Build dynamic UPDATE query
         update_fields = []
         values = []
         
         allowed_fields = [
-            "first_name_arabic", "middle_name_arabic", "last_name_arabic",
-            "first_name_english", "middle_name_english", "last_name_english",
-            "date_of_birth", "place_of_birth", "gender",
+            "surname_arabic", "given_names_arabic",
+            "surname_english", "given_names_english",
+            "profession",
+            "date_of_birth", "place_of_birth", "gender", "blood_group",
             "passport_type", "issuance_date", "expiry_date", "issuing_authority",
             "mrz_line_1", "mrz_line_2",
-            "front_image_blob", "back_image_blob", "selfie_image_blob"
+            "passport_image_blob", "selfie_image_blob"
         ]
         
         for field in allowed_fields:
@@ -572,9 +550,186 @@ class YemenPassportDB(BaseDatabase):
             conn.close()
 
 
+class VerificationDB(BaseDatabase):
+    """Database for storing verification results."""
+    
+    def __init__(self):
+        super().__init__(DATABASE_DIR / "verification_results.db")
+    
+    def get_table_name(self) -> str:
+        return "verifications"
+    
+    def get_columns(self) -> List[str]:
+        return [
+            "id", "document_type", "document_id",
+            # ID Card name fields (used when document_type = 'id_card')
+            "first_name_arabic", "middle_name_arabic", "last_name_arabic",
+            "first_name_english", "middle_name_english", "last_name_english",
+            # Passport name fields (used when document_type = 'passport')
+            "surname_arabic", "given_names_arabic",
+            "surname_english", "given_names_english",
+            "profession",
+            # Common fields
+            "date_of_birth", "place_of_birth", "gender", "blood_group",
+            # Verification results
+            "verification_status", "similarity_score",
+            # Images
+            "selfie_image_blob", "document_image_blob",
+            # Timestamps
+            "verified_at", "created_at"
+        ]
+    
+    def _create_table(self):
+        """Create the verifications table if it doesn't exist."""
+        conn = self._get_connection()
+        try:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS verifications (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    document_type TEXT NOT NULL,
+                    document_id TEXT NOT NULL,
+                    first_name_arabic TEXT,
+                    middle_name_arabic TEXT,
+                    last_name_arabic TEXT,
+                    first_name_english TEXT,
+                    middle_name_english TEXT,
+                    last_name_english TEXT,
+                    surname_arabic TEXT,
+                    given_names_arabic TEXT,
+                    surname_english TEXT,
+                    given_names_english TEXT,
+                    profession TEXT,
+                    date_of_birth TEXT,
+                    place_of_birth TEXT,
+                    gender TEXT,
+                    blood_group TEXT,
+                    verification_status TEXT DEFAULT 'pending',
+                    similarity_score REAL,
+                    selfie_image_blob BLOB,
+                    document_image_blob BLOB,
+                    verified_at TEXT,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            conn.commit()
+        finally:
+            conn.close()
+    
+    def insert(self, data: Dict[str, Any]) -> int:
+        """
+        Insert a new verification record.
+        
+        Args:
+            data: Dictionary with verification data. Required fields:
+                - document_type ('id_card' or 'passport')
+                - document_id (national_id or passport_number)
+                - verification_status ('verified', 'failed', 'pending')
+                - similarity_score (0.0 - 1.0)
+                
+        Returns:
+            The inserted record ID
+        """
+        conn = self._get_connection()
+        try:
+            local_timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            verified_at = local_timestamp if data.get("verification_status") == "verified" else None
+            
+            cursor = conn.execute("""
+                INSERT INTO verifications (
+                    document_type, document_id,
+                    first_name_arabic, middle_name_arabic, last_name_arabic,
+                    first_name_english, middle_name_english, last_name_english,
+                    surname_arabic, given_names_arabic,
+                    surname_english, given_names_english,
+                    profession,
+                    date_of_birth, place_of_birth, gender, blood_group,
+                    verification_status, similarity_score,
+                    selfie_image_blob, document_image_blob,
+                    verified_at, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                data.get("document_type"),
+                data.get("document_id"),
+                data.get("first_name_arabic"), data.get("middle_name_arabic"), data.get("last_name_arabic"),
+                data.get("first_name_english"), data.get("middle_name_english"), data.get("last_name_english"),
+                data.get("surname_arabic"), data.get("given_names_arabic"),
+                data.get("surname_english"), data.get("given_names_english"),
+                data.get("profession"),
+                data.get("date_of_birth"), data.get("place_of_birth"), data.get("gender"), data.get("blood_group"),
+                data.get("verification_status", "pending"), data.get("similarity_score"),
+                data.get("selfie_image_blob"), data.get("document_image_blob"),
+                verified_at, local_timestamp
+            ))
+            conn.commit()
+            return cursor.lastrowid
+        finally:
+            conn.close()
+    
+    def get_by_document_id(self, document_id: str, document_type: str = None) -> List[Dict[str, Any]]:
+        """Get all verification records for a document ID."""
+        conn = self._get_connection()
+        try:
+            if document_type:
+                cursor = conn.execute(
+                    "SELECT * FROM verifications WHERE document_id = ? AND document_type = ? ORDER BY created_at DESC",
+                    (document_id, document_type)
+                )
+            else:
+                cursor = conn.execute(
+                    "SELECT * FROM verifications WHERE document_id = ? ORDER BY created_at DESC",
+                    (document_id,)
+                )
+            return [dict(row) for row in cursor.fetchall()]
+        finally:
+            conn.close()
+    
+    def get_verified_records(self) -> List[Dict[str, Any]]:
+        """Get all successful verification records."""
+        conn = self._get_connection()
+        try:
+            cursor = conn.execute(
+                "SELECT * FROM verifications WHERE verification_status = 'verified' ORDER BY verified_at DESC"
+            )
+            return [dict(row) for row in cursor.fetchall()]
+        finally:
+            conn.close()
+    
+    def update(self, record_id: int, data: Dict[str, Any]) -> bool:
+        """Update an existing verification record by ID."""
+        update_fields = []
+        values = []
+        
+        allowed_fields = [
+            "verification_status", "similarity_score",
+            "selfie_image_blob", "document_image_blob", "verified_at"
+        ]
+        
+        for field in allowed_fields:
+            if field in data:
+                update_fields.append(f"{field} = ?")
+                values.append(data[field])
+        
+        if not update_fields:
+            return False
+        
+        values.append(record_id)
+        
+        conn = self._get_connection()
+        try:
+            cursor = conn.execute(
+                f"UPDATE verifications SET {', '.join(update_fields)} WHERE id = ?",
+                values
+            )
+            conn.commit()
+            return cursor.rowcount > 0
+        finally:
+            conn.close()
+
+
 # Singleton instances
 _id_card_db: Optional[YemenIDCardDB] = None
 _passport_db: Optional[YemenPassportDB] = None
+_verification_db: Optional[VerificationDB] = None
 
 
 def get_id_card_db() -> YemenIDCardDB:
@@ -591,3 +746,11 @@ def get_passport_db() -> YemenPassportDB:
     if _passport_db is None:
         _passport_db = YemenPassportDB()
     return _passport_db
+
+
+def get_verification_db() -> VerificationDB:
+    """Get the Verification database instance."""
+    global _verification_db
+    if _verification_db is None:
+        _verification_db = VerificationDB()
+    return _verification_db
