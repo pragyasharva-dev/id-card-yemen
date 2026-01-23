@@ -1,7 +1,7 @@
 """
 Pydantic models for API request/response schemas.
 """
-from typing import Optional, List, Literal
+from typing import Optional, List, Literal, Dict, Any
 from pydantic import BaseModel, Field
 
 # Import form validators for ID card data entry
@@ -328,4 +328,45 @@ class NameMatchingResult(BaseModel):
         description="Validation decision - MAY reject on low scores (high severity)"
     )
     reason: str = Field(..., description="Explanation for the decision")
+
+
+# Field Comparison Data Models
+class FieldComparisonResult(BaseModel):
+    """Result of comparing a single field between OCR and manual input."""
+    field_name: str = Field(..., description="Name of the field")
+    severity: Literal["high", "medium", "low"] = Field(..., description="Field severity level")
+    matching_type: str = Field(..., description="Matching type (exact/fuzzy/token)")
+    match: bool = Field(..., description="Whether values match")
+    score: float = Field(..., description="Matching score (0-1)")
+    ocr_value: Optional[str] = Field(None, description="OCR value")
+    user_value: Optional[str] = Field(None, description="User value")
+    decision: Literal["pass", "manual_review", "reject"] = Field(..., description="Decision")
+    reason: str = Field(..., description="Explanation")
+    fraud_detected: Optional[bool] = Field(None, description="Fraud detection flag")
+    fraud_reason: Optional[str] = Field(None, description="Fraud reason if detected")
+    days_diff: Optional[int] = Field(None, description="Days difference for dates")
+
+
+class FormOCRComparisonSummary(BaseModel):
+    """Summary statistics."""
+    total_fields: int
+    passed_fields: int
+    review_fields: int
+    failed_fields: int
+
+
+class FormOCRComparisonRequest(BaseModel):
+    """Request to compare manual vs OCR data."""
+    manual_data: Dict[str, Any] = Field(..., description="Manual form data")
+    ocr_data: Dict[str, Any] = Field(..., description="OCR extracted data")
+    ocr_confidence: float = Field(1.0, ge=0.0, le=1.0, description="OCR confidence")
+
+
+class FormOCRComparisonResponse(BaseModel):
+    """Response with comparison results."""
+    overall_decision: Literal["approved", "manual_review", "rejected"]
+    overall_score: float = Field(..., ge=0.0, le=1.0)
+    field_comparisons: List[FieldComparisonResult]
+    summary: FormOCRComparisonSummary
+    recommendations: List[str]
 

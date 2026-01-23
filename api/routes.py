@@ -8,6 +8,7 @@ Provides endpoints for:
 - /translate: Translate Arabic texts to English
 - /process-batch: Batch process ID cards
 - /submit-id-form: Submit and validate ID card form data
+- /compare-form-ocr: Compare manual form data with OCR extracted data
 - /health: Health check
 """
 import cv2
@@ -22,7 +23,8 @@ from models.schemas import (
     BatchProcessRequest, BatchProcessResponse,
     HealthResponse, OCRResult, FaceMatchResult,
     TranslateRequest, TranslateResponse, TranslatedText,
-    IDFormSubmitRequest, IDFormSubmitResponse
+    IDFormSubmitRequest, IDFormSubmitResponse,
+    FormOCRComparisonRequest, FormOCRComparisonResponse
 )
 from services.ocr_service import extract_id_from_image, get_ocr_service
 from services.face_recognition import verify_identity, compare_faces, is_ready as face_ready
@@ -319,6 +321,49 @@ async def extract_id_endpoint(
         )
 
 
+@router.post("/parse-id")
+async def parse_id_endpoint(
+    image: UploadFile = File(..., description="ID card image file")
+):
+    """
+    Parse full ID card data including all fields.
+    
+    Extracts: ID number, name (Arabic/English), DOB, gender, 
+    place of birth, issuance/expiry dates.
+    """
+    try:
+        from services.id_card_parser import parse_yemen_id_card
+        
+        image_bytes = await image.read()
+        id_card_image = load_image(image_bytes)
+        
+        # Get OCR result
+        ocr_result = extract_id_from_image(id_card_image)
+        
+        # Parse into structured data
+        parsed_data = parse_yemen_id_card(ocr_result, None)
+        
+        return {
+            "success": True,
+            "id_number": parsed_data.get("id_number"),
+            "name_arabic": parsed_data.get("name_arabic"),
+            "name_english": parsed_data.get("name_english"),
+            "date_of_birth": parsed_data.get("date_of_birth"),
+            "gender": parsed_data.get("gender"),
+            "place_of_birth": parsed_data.get("place_of_birth"),
+            "issuance_date": parsed_data.get("issuance_date"),
+            "expiry_date": parsed_data.get("expiry_date"),
+            "blood_type": parsed_data.get("blood_type"),
+            "id_type": ocr_result.get("id_type", "yemen_id"),
+            "error": None
+        }
+        
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e)
+        }
+
 @router.post("/compare-faces", response_model=CompareFacesResponse)
 async def compare_faces_endpoint(
     image1: UploadFile = File(..., description="First image (e.g., ID card)"),
@@ -479,6 +524,46 @@ async def translate_texts_endpoint(request: TranslateRequest):
         )
 
 
+@router.post("/compare-form-ocr", response_model=FormOCRComparisonResponse)
+async def compare_form_ocr_endpoint(request: FormOCRComparisonRequest):
+    """
+    Compare manually entered form data with OCR extracted data.
+    
+    Uses configurable severity levels and field-specific thresholds to determine
+    overall verification decision (approved/manual_review/rejected).
+    
+    **Severity Levels:**
+    - **High**: ID number, DOB, names, gender - may cause rejection
+    - **Medium**: Issuance/expiry dates - causes manual review
+    - **Low**: Place of birth - only manual review, never rejects
+    
+    **Decision Logic:**
+    - Any high-severity field below threshold → REJECT
+    - Any medium/low severity field below threshold → MANUAL REVIEW
+    - All fields pass → APPROVED
+    
+    Returns field-by-field comparison results plus overall decision.
+    """
+    try:
+        from services.field_comparison_service import validate_form_vs_ocr
+        
+        # Perform comparison
+        result = validate_form_vs_ocr(
+            manual_data=request.manual_data,
+            ocr_data=request.ocr_data,
+            ocr_confidence=request.ocr_confidence
+        )
+        
+        # Convert to response model
+        return FormOCRComparisonResponse(**result)
+        
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Form-OCR comparison failed: {str(e)}"
+        )
+
+
 @router.post("/submit-id-form", response_model=IDFormSubmitResponse)
 async def submit_id_form_endpoint(request: IDFormSubmitRequest):
     """
@@ -579,3 +664,281 @@ async def submit_id_form_endpoint(request: IDFormSubmitRequest):
                 )],
                 validated_data=None
             )
+
+
+@router.post("/validate-id")
+async def validate_id_endpoint(
+    image_front: UploadFile = File(..., description="ID card front side image"),
+    id_type: str = Form(..., description="Expected ID type: yemen_national_id or yemen_passport"),
+    id_number: str = Form(..., description="Manually entered ID/Passport number"),
+    image_back: UploadFile = File(None, description="ID card back side image (optional)"),
+    name_arabic: Optional[str] = Form(None, description="Name in Arabic"),
+    name_english: Optional[str] = Form(None, description="Name in English"),
+    date_of_birth: Optional[str] = Form(None, description="Date of birth (YYYY-MM-DD)"),
+    gender: Optional[str] = Form(None, description="Gender: Male or Female"),
+    place_of_birth: Optional[str] = Form(None, description="Place of birth"),
+    issuance_date: Optional[str] = Form(None, description="Issuance date (YYYY-MM-DD)"),
+    expiry_date: Optional[str] = Form(None, description="Expiry date (YYYY-MM-DD)"),
+    issuing_authority: Optional[str] = Form(None, description="Issuing authority/center")
+):
+    """
+    🔍 UNIFIED ID VALIDATION API (Front + Back)
+    
+    Comprehensive endpoint that performs:
+    1. ID Type Detection - Identifies if image is National ID or Passport
+    2. ID Type Matching - Verifies detected type matches expected type
+    3. OCR Extraction - Extracts all fields from front AND back
+    4. Field-by-Field Comparison - Compares manual data with OCR data
+    5. Validation Checks - Applies all configured validation rules
+    6. Decision Making - Returns approved/manual_review/rejected
+    
+    Use this for production API testing in Postman.
+    """
+    import json
+    from datetime import datetime
+    from services.id_card_parser import parse_yemen_id_card
+    from services.field_comparison_service import validate_form_vs_ocr
+    
+    # ============================================
+    # INPUT SANITIZATION - Strip whitespace/newlines
+    # ============================================
+    def clean_input(value):
+        if value is None:
+            return None
+        return value.strip() if isinstance(value, str) else value
+    
+    id_number = clean_input(id_number)
+    name_arabic = clean_input(name_arabic)
+    name_english = clean_input(name_english)
+    date_of_birth = clean_input(date_of_birth)
+    gender = clean_input(gender)
+    place_of_birth = clean_input(place_of_birth)
+    issuance_date = clean_input(issuance_date)
+    expiry_date = clean_input(expiry_date)
+    issuing_authority = clean_input(issuing_authority)
+    id_type = clean_input(id_type)
+    
+    response = {
+        "success": False,
+        "timestamp": datetime.now().isoformat(),
+        "request": {
+            "expected_id_type": id_type,
+            "has_back_image": image_back is not None,
+            "manual_data": {
+                "id_number": id_number,
+                "name_arabic": name_arabic,
+                "name_english": name_english,
+                "date_of_birth": date_of_birth,
+                "gender": gender,
+                "place_of_birth": place_of_birth,
+                "issuance_date": issuance_date,
+                "expiry_date": expiry_date,
+                "issuing_authority": issuing_authority
+            }
+        },
+        "steps": [],
+        "ocr_extracted_data": None,
+        "comparison_results": None,
+        "overall_decision": None,
+        "errors": []
+    }
+    
+    try:
+        # ============================================
+        # STEP 1: Load and validate FRONT image
+        # ============================================
+        front_bytes = await image_front.read()
+        front_image = load_image(front_bytes)
+        
+        if front_image is None:
+            response["errors"].append("Failed to load front image")
+            response["steps"].append({"step": 1, "name": "Front Image Load", "status": "FAILED"})
+            return response
+        
+        response["steps"].append({"step": 1, "name": "Front Image Load", "status": "PASSED"})
+        
+        # Load BACK image if provided
+        back_image = None
+        if image_back:
+            back_bytes = await image_back.read()
+            back_image = load_image(back_bytes)
+            if back_image is not None:
+                response["steps"].append({"step": 1.5, "name": "Back Image Load", "status": "PASSED"})
+            else:
+                response["steps"].append({"step": 1.5, "name": "Back Image Load", "status": "WARNING", "message": "Could not load back image"})
+        
+        # ============================================
+        # STEP 2: OCR Extraction - FRONT
+        # ============================================
+        front_ocr = extract_id_from_image(front_image)
+        
+        if not front_ocr or not front_ocr.get("extracted_id"):
+            response["errors"].append("OCR extraction failed on front image - no ID detected")
+            response["steps"].append({"step": 2, "name": "Front OCR", "status": "FAILED"})
+            return response
+        
+        detected_id_type = front_ocr.get("id_type", "unknown")
+        response["detected_id_type"] = detected_id_type
+        response["steps"].append({
+            "step": 2, 
+            "name": "Front OCR", 
+            "status": "PASSED",
+            "detected_id_type": detected_id_type,
+            "extracted_id": front_ocr.get("extracted_id")
+        })
+        
+        # OCR Extraction - BACK (if provided)
+        back_ocr = None
+        if back_image is not None:
+            back_ocr = extract_id_from_image(back_image)
+            if back_ocr:
+                response["steps"].append({
+                    "step": 2.5, 
+                    "name": "Back OCR", 
+                    "status": "PASSED",
+                    "extracted_id": back_ocr.get("extracted_id")
+                })
+            else:
+                response["steps"].append({"step": 2.5, "name": "Back OCR", "status": "WARNING", "message": "No data extracted from back"})
+        
+        # ============================================
+        # STEP 3: ID Type Matching
+        # ============================================
+        # Normalize ID types for comparison
+        expected_normalized = id_type.lower().replace("-", "_").replace(" ", "_")
+        detected_normalized = detected_id_type.lower().replace("-", "_").replace(" ", "_")
+        
+        # Map variations
+        type_mappings = {
+            "yemen_national_id": ["yemen_national_id", "yemen_id", "national_id"],
+            "yemen_passport": ["yemen_passport", "passport"]
+        }
+        
+        id_type_match = False
+        for standard, variations in type_mappings.items():
+            if expected_normalized in variations and detected_normalized in variations:
+                id_type_match = True
+                break
+        
+        if not id_type_match:
+            response["errors"].append(f"ID type mismatch: Expected '{id_type}', Detected '{detected_id_type}'")
+            response["steps"].append({
+                "step": 3, 
+                "name": "ID Type Matching", 
+                "status": "FAILED",
+                "expected": id_type,
+                "detected": detected_id_type
+            })
+            response["overall_decision"] = "rejected"
+            response["success"] = True  # API worked, but validation failed
+            return response
+        
+        response["steps"].append({
+            "step": 3, 
+            "name": "ID Type Matching", 
+            "status": "PASSED",
+            "expected": id_type,
+            "detected": detected_id_type
+        })
+        
+        # ============================================
+        # STEP 4: Full Field Extraction (Parse ID - Front + Back)
+        # ============================================
+        parsed_data = parse_yemen_id_card(front_ocr, back_ocr)
+        
+        if not parsed_data:
+            response["errors"].append("Failed to parse ID card fields")
+            response["steps"].append({"step": 4, "name": "Field Extraction", "status": "FAILED"})
+            return response
+        
+        response["ocr_extracted_data"] = {
+            "id_number": parsed_data.get("id_number"),
+            "name_arabic": parsed_data.get("name_arabic"),
+            "name_english": parsed_data.get("name_english"),
+            "date_of_birth": parsed_data.get("date_of_birth"),
+            "gender": parsed_data.get("gender"),
+            "place_of_birth": parsed_data.get("place_of_birth"),
+            "issuance_date": parsed_data.get("issuance_date"),
+            "expiry_date": parsed_data.get("expiry_date"),
+            "issuing_authority": parsed_data.get("issuing_authority")
+        }
+        
+        response["steps"].append({
+            "step": 4, 
+            "name": "Field Extraction", 
+            "status": "PASSED",
+            "fields_extracted": len([v for v in response["ocr_extracted_data"].values() if v]),
+            "from_back": back_ocr is not None
+        })
+        
+        # ============================================
+        # STEP 5: Manual vs OCR Comparison
+        # ============================================
+        manual_data = {
+            "id_number": id_number,
+            "name_arabic": name_arabic,
+            "name_english": name_english,
+            "date_of_birth": date_of_birth,
+            "gender": gender,
+            "place_of_birth": place_of_birth,
+            "issuance_date": issuance_date,
+            "expiry_date": expiry_date,
+            "issuing_authority": issuing_authority
+        }
+        
+        comparison_result = validate_form_vs_ocr(
+            manual_data=manual_data,
+            ocr_data=response["ocr_extracted_data"],
+            ocr_confidence=front_ocr.get("confidence", 0.9)
+        )
+        
+        response["comparison_results"] = {
+            "overall_score": comparison_result.get("overall_score"),
+            "field_comparisons": comparison_result.get("field_comparisons"),
+            "summary": comparison_result.get("summary"),
+            "recommendations": comparison_result.get("recommendations")
+        }
+        
+        response["steps"].append({
+            "step": 5, 
+            "name": "Data Comparison", 
+            "status": "PASSED",
+            "overall_score": comparison_result.get("overall_score")
+        })
+        
+        # ============================================
+        # STEP 6: Final Decision
+        # ============================================
+        overall_decision = comparison_result.get("overall_decision", "manual_review")
+        response["overall_decision"] = overall_decision
+        
+        decision_status = "PASSED" if overall_decision == "approved" else "REVIEW" if overall_decision == "manual_review" else "FAILED"
+        response["steps"].append({
+            "step": 6, 
+            "name": "Final Decision", 
+            "status": decision_status,
+            "decision": overall_decision
+        })
+        
+        response["success"] = True
+        
+        # Add summary
+        response["summary"] = {
+            "image_processed": True,
+            "id_type_matched": id_type_match,
+            "fields_compared": len(comparison_result.get("field_comparisons", [])),
+            "fields_passed": comparison_result.get("summary", {}).get("passed_fields", 0),
+            "fields_failed": comparison_result.get("summary", {}).get("failed_fields", 0),
+            "overall_score": comparison_result.get("overall_score"),
+            "decision": overall_decision
+        }
+        
+        return response
+        
+    except Exception as e:
+        response["errors"].append(f"Unexpected error: {str(e)}")
+        response["success"] = False
+        import traceback
+        response["traceback"] = traceback.format_exc()
+        return response
+

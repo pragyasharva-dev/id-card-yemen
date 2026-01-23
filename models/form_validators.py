@@ -7,11 +7,52 @@ Provides production-level Pydantic validators for:
 - Name validation (alphabets, spaces, hyphens only)
 - Date validation (proper format and range checking)
 - ID number validation with regex patterns
+- AUTO-DETECT name language (Arabic vs English)
 """
 from datetime import datetime, date
 from typing import Optional, Literal
 from pydantic import BaseModel, Field, field_validator, model_validator
 import re
+
+
+def detect_name_language(name: str) -> str:
+    """
+    Auto-detect if a name is Arabic or English based on character analysis.
+    
+    Args:
+        name: The name string to analyze
+        
+    Returns:
+        "arabic" if majority Arabic characters
+        "english" if majority Latin/English characters
+        "mixed" if roughly equal
+    """
+    if not name:
+        return "unknown"
+    
+    arabic_count = 0
+    english_count = 0
+    
+    for char in name:
+        # Arabic Unicode range: 0x0600-0x06FF (Arabic), 0x0750-0x077F (Arabic Supplement)
+        if '\u0600' <= char <= '\u06FF' or '\u0750' <= char <= '\u077F':
+            arabic_count += 1
+        # Latin/English: A-Z, a-z
+        elif char.isalpha() and char.isascii():
+            english_count += 1
+    
+    total = arabic_count + english_count
+    if total == 0:
+        return "unknown"
+    
+    arabic_ratio = arabic_count / total
+    
+    if arabic_ratio >= 0.6:
+        return "arabic"
+    elif arabic_ratio <= 0.4:
+        return "english"
+    else:
+        return "mixed"
 
 
 class YemenNationalIDForm(BaseModel):
@@ -382,6 +423,12 @@ class IDFormSubmitRequest(BaseModel):
     IMPORTANT:
     - For yemen_national_id: Gender is AUTO-DERIVED from 4th digit of ID number (do NOT send gender)
     - For yemen_passport: Gender is REQUIRED (pre-written on passport)
+    
+    NAME AUTO-DETECT FEATURE:
+    - You can send EITHER:
+      1. `name_arabic` + `name_english` (both required) OR
+      2. `full_name` (single field - system auto-detects language)
+    - If `full_name` is provided, it auto-routes to the correct field based on script detection
     """
     
     id_type: Literal["yemen_national_id", "yemen_passport"] = Field(
@@ -401,9 +448,14 @@ class IDFormSubmitRequest(BaseModel):
         description="Yemen Passport number (required for yemen_passport)"
     )
     
-    # Common fields
-    name_arabic: str = Field(..., description="Full name in Arabic")
-    name_english: str = Field(..., description="Full name in English")
+    # Name fields - EITHER use full_name OR (name_arabic + name_english)
+    full_name: Optional[str] = Field(
+        None,
+        description="Full name (auto-detects Arabic/English). Use this as alternative to name_arabic + name_english"
+    )
+    name_arabic: Optional[str] = Field(None, description="Full name in Arabic (auto-filled if full_name is Arabic)")
+    name_english: Optional[str] = Field(None, description="Full name in English (auto-filled if full_name is English)")
+    
     date_of_birth: str = Field(..., description="Date of birth (YYYY-MM-DD)")
     
     # Gender: Optional for National ID (manual or auto-derived), Required for Passport
@@ -418,7 +470,45 @@ class IDFormSubmitRequest(BaseModel):
     
     @model_validator(mode='after')
     def validate_id_type_fields(self):
-        """Ensure appropriate ID number and gender logic based on id_type."""
+        """
+        Ensure appropriate ID number, gender, and name logic based on id_type.
+        
+        AUTO-DETECT NAME LANGUAGE:
+        If full_name is provided (and name_arabic/name_english are not), 
+        auto-detect the language and route to the correct field.
+        """
+        
+        # ==========================================
+        # NAME AUTO-DETECTION LOGIC
+        # ==========================================
+        if self.full_name:
+            detected_lang = detect_name_language(self.full_name)
+            
+            if detected_lang == "arabic":
+                # Auto-fill name_arabic if not already provided
+                if not self.name_arabic:
+                    self.name_arabic = self.full_name
+            elif detected_lang == "english":
+                # Auto-fill name_english if not already provided
+                if not self.name_english:
+                    self.name_english = self.full_name
+            elif detected_lang == "mixed":
+                # If mixed, fill both if empty
+                if not self.name_arabic:
+                    self.name_arabic = self.full_name
+                if not self.name_english:
+                    self.name_english = self.full_name
+        
+        # Validate that at least one name is provided
+        if not self.name_arabic and not self.name_english:
+            raise ValueError(
+                "A name is required. Provide either 'full_name' (auto-detect), "
+                "or 'name_arabic' and/or 'name_english'."
+            )
+        
+        # ==========================================
+        # ID TYPE VALIDATION
+        # ==========================================
         if self.id_type == "yemen_national_id":
             if not self.id_number:
                 raise ValueError(
