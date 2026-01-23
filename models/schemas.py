@@ -85,6 +85,37 @@ class FaceMatchResult(BaseModel):
     )
 
 
+class LivenessCheckResult(BaseModel):
+    """Result of an individual liveness check."""
+    passed: bool = Field(..., description="Whether this check passed")
+    score: float = Field(..., description="Raw score for this check")
+    threshold: float = Field(..., description="Threshold used for comparison")
+
+
+class LivenessResult(BaseModel):
+    """Complete liveness detection result."""
+    is_live: bool = Field(
+        ..., 
+        description="Whether the image appears to be from a live person"
+    )
+    confidence: float = Field(
+        ..., 
+        description="Overall liveness confidence (0.0-1.0)"
+    )
+    spoof_probability: float = Field(
+        ..., 
+        description="Probability that this is a spoof attempt (0.0-1.0)"
+    )
+    checks: dict = Field(
+        default_factory=dict,
+        description="Individual check results (texture, color, sharpness, reflection)"
+    )
+    error: Optional[str] = Field(
+        None,
+        description="Error message if liveness detection failed"
+    )
+
+
 class VerifyResponse(BaseModel):
     """Response model for the /verify endpoint."""
     success: bool = Field(
@@ -139,6 +170,10 @@ class VerifyResponse(BaseModel):
     expiry_date: Optional[str] = Field(
         None,
         description="ID card expiry date in YYYY-MM-DD format"
+    )
+    liveness: Optional[LivenessResult] = Field(
+        None,
+        description="Liveness detection result for the selfie (warning only, non-blocking)"
     )
     error: Optional[str] = Field(
         None, 
@@ -222,6 +257,7 @@ class HealthResponse(BaseModel):
     status: str = "ok"
     ocr_ready: bool = False
     face_recognition_ready: bool = False
+    liveness_enabled: bool = False
 
 
 # Translation schemas

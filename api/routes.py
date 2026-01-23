@@ -26,7 +26,7 @@ from models.schemas import (
     ExtractIDRequest, ExtractIDResponse,
     CompareFacesRequest, CompareFacesResponse,
     BatchProcessRequest, BatchProcessResponse,
-    HealthResponse, OCRResult, FaceMatchResult,
+    HealthResponse, OCRResult, FaceMatchResult, LivenessResult,
     TranslateRequest, TranslateResponse, TranslatedText,
     # Database schemas
     SaveIDCardRequest, SavePassportRequest,
@@ -52,6 +52,7 @@ async def health_check():
     """
     ocr_ready = False
     face_recognition_ready = False
+    liveness_enabled = False
     
     try:
         get_ocr_service()
@@ -64,10 +65,17 @@ async def health_check():
     except Exception:
         pass
     
+    try:
+        from services.liveness_service import is_liveness_enabled
+        liveness_enabled = is_liveness_enabled()
+    except Exception:
+        pass
+    
     return HealthResponse(
         status="ok",
         ocr_ready=ocr_ready,
-        face_recognition_ready=face_recognition_ready
+        face_recognition_ready=face_recognition_ready,
+        liveness_enabled=liveness_enabled
     )
 
 
@@ -90,8 +98,6 @@ async def verify_identity_endpoint(
     higher values indicate higher likelihood of same person.
     """
     try:
-        from services.id_card_parser import parse_yemen_id_card
-        
         # Load front ID card and selfie
         id_card_front_bytes = await id_card_front.read()
         selfie_bytes = await selfie.read()
@@ -109,18 +115,13 @@ async def verify_identity_endpoint(
             id_card_back_bytes = await id_card_back.read()
             id_card_back_image = load_image(id_card_back_bytes)
         
-        # Extract ID and all OCR data from front card
+        # Extract ID from front card
         front_ocr_result = extract_id_from_image(id_card_front_image)
         extracted_id = front_ocr_result.get("extracted_id")
         id_type = front_ocr_result.get("id_type")
         
-        # Extract OCR from back card if provided
-        back_ocr_result = None
-        if id_card_back_image is not None:
-            back_ocr_result = extract_id_from_image(id_card_back_image)
-        
-        # Parse structured data from FRONT and BACK OCR results separately
-        parsed_data = parse_yemen_id_card(front_ocr_result, back_ocr_result)
+        # Note: Structured data parsing removed - data is now entered manually into database
+        parsed_data = {}
         
         # Save images with proper naming if ID was extracted
         if extracted_id:
@@ -139,6 +140,18 @@ async def verify_identity_endpoint(
         # Face verification using front card
         face_result = verify_identity(id_card_front_image, selfie_image)
         
+        # Convert liveness dict to LivenessResult model if present
+        liveness_response = None
+        if face_result.get("liveness"):
+            liveness_data = face_result["liveness"]
+            liveness_response = LivenessResult(
+                is_live=liveness_data.get("is_live", False),
+                confidence=liveness_data.get("confidence", 0.0),
+                spoof_probability=liveness_data.get("spoof_probability", 1.0),
+                checks=liveness_data.get("checks", {}),
+                error=liveness_data.get("error")
+            )
+        
         if face_result.get("error"):
             return VerifyResponse(
                 success=False,
@@ -154,8 +167,56 @@ async def verify_identity_endpoint(
                 place_of_birth=parsed_data.get("place_of_birth"),
                 issuance_date=parsed_data.get("issuance_date"),
                 expiry_date=parsed_data.get("expiry_date"),
+                liveness=liveness_response,
                 error=face_result["error"]
             )
+        
+        # AUTO-SAVE: Save extracted data to database after successful verification
+        if extracted_id:
+            try:
+                import cv2
+                db = get_id_card_db()
+                
+                # Convert images to JPEG bytes for blob storage
+                front_blob = None
+                back_blob = None
+                selfie_blob = None
+                
+                if id_card_front_image is not None:
+                    _, front_encoded = cv2.imencode('.jpg', id_card_front_image)
+                    front_blob = front_encoded.tobytes()
+                
+                if id_card_back_image is not None:
+                    _, back_encoded = cv2.imencode('.jpg', id_card_back_image)
+                    back_blob = back_encoded.tobytes()
+                
+                if selfie_image is not None:
+                    _, selfie_encoded = cv2.imencode('.jpg', selfie_image)
+                    selfie_blob = selfie_encoded.tobytes()
+                
+                db_data = {
+                    "national_id": extracted_id,
+                    "name_arabic": parsed_data.get("name_arabic"),
+                    "name_english": parsed_data.get("name_english"),
+                    "date_of_birth": parsed_data.get("date_of_birth"),
+                    "place_of_birth": parsed_data.get("place_of_birth"),
+                    "gender": parsed_data.get("gender"),
+                    "issuance_date": parsed_data.get("issuance_date"),
+                    "expiry_date": parsed_data.get("expiry_date"),
+                    "front_image_blob": front_blob,
+                    "back_image_blob": back_blob,
+                    "selfie_image_blob": selfie_blob
+                }
+                
+                # Check if record exists, update or insert
+                existing = db.get_by_national_id(extracted_id)
+                if existing:
+                    db.update(extracted_id, db_data)
+                else:
+                    db.insert(db_data)
+            except Exception as db_error:
+                # Log error but don't fail the verification
+                print(f"Warning: Failed to save to database: {db_error}")
         
         return VerifyResponse(
             success=True,
@@ -171,6 +232,7 @@ async def verify_identity_endpoint(
             place_of_birth=parsed_data.get("place_of_birth"),
             issuance_date=parsed_data.get("issuance_date"),
             expiry_date=parsed_data.get("expiry_date"),
+            liveness=liveness_response,
             error=None
         )
         
@@ -189,108 +251,10 @@ async def verify_identity_endpoint(
             place_of_birth=None,
             issuance_date=None,
             expiry_date=None,
+            liveness=None,
             error=str(e)
         )
 
-
-@router.post("/verify-json", response_model=VerifyResponse)
-async def verify_identity_json(request: VerifyRequest):
-    """
-    e-KYC verification using JSON body with ID number and selfie path/base64.
-    
-    Searches ID cards database for matching ID, then compares faces.
-    """
-    try:
-        from services.id_database import search_id_card_by_number
-        
-        # Load selfie image
-        if request.selfie_path:
-            selfie_image = load_image(request.selfie_path)
-        elif request.selfie_base64:
-            selfie_image = load_image(request.selfie_base64)
-        else:
-            raise ValueError("Either selfie_path or selfie_base64 is required")
-        
-        # Search for ID card in database
-        search_result = search_id_card_by_number(request.id_number)
-        
-        if search_result is None:
-            return VerifyResponse(
-                success=False,
-                extracted_id=request.id_number,
-                id_type=None,
-                similarity_score=None,
-                id_front=None,
-                id_back=None,
-                name_arabic=None,
-                name_english=None,
-                date_of_birth=None,
-                gender=None,
-                place_of_birth=None,
-                issuance_date=None,
-                expiry_date=None,
-                error=f"ID card with number '{request.id_number}' not found in database"
-            )
-        
-        card_path, id_card_image, ocr_result = search_result
-        extracted_id = ocr_result.get("extracted_id")
-        id_type = ocr_result.get("id_type")
-        
-        # Face verification
-        face_result = verify_identity(id_card_image, selfie_image)
-        
-        if face_result.get("error"):
-            return VerifyResponse(
-                success=False,
-                extracted_id=extracted_id,
-                id_type=id_type,
-                similarity_score=None,
-                id_front=None,
-                id_back=None,
-                name_arabic=None,
-                name_english=None,
-                date_of_birth=None,
-                gender=None,
-                place_of_birth=None,
-                issuance_date=None,
-                expiry_date=None,
-                error=face_result["error"]
-            )
-        
-        return VerifyResponse(
-            success=True,
-            extracted_id=extracted_id,
-            id_type=id_type,
-            similarity_score=face_result["similarity_score"],
-            id_front=None,
-            id_back=None,
-            name_arabic=None,
-            name_english=None,
-            date_of_birth=None,
-            gender=None,
-            place_of_birth=None,
-            issuance_date=None,
-            expiry_date=None,
-            error=None
-        )
-        
-    except Exception as e:
-        return VerifyResponse(
-            success=False,
-            extracted_id=None,
-            id_type=None,
-            similarity_score=None,
-            id_front=None,
-            id_back=None,
-            name_arabic=None,
-            name_english=None,
-            date_of_birth=None,
-            gender=None,
-            place_of_birth=None,
-            issuance_date=None,
-            expiry_date=None,
-            error=str(e)
-        )
 
 
 @router.post("/extract-id", response_model=ExtractIDResponse)

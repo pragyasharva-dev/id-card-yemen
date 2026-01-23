@@ -67,3 +67,13 @@ FACE_DETECTION_CTX = 0  # GPU context, -1 for CPU
 # Image Processing Settings
 SUPPORTED_IMAGE_FORMATS = [".png", ".jpg", ".jpeg", ".bmp", ".tiff"]
 MAX_IMAGE_SIZE = (2000, 2000)  # Maximum dimensions for processing
+
+# Liveness Detection Settings (Passive Anti-Spoofing)
+LIVENESS_ENABLED = True  # Enable/disable liveness checks
+LIVENESS_THRESHOLD = 0.7  # Minimum combined score to pass (0.0-1.0)
+LIVENESS_TEXTURE_THRESHOLD = 50.0  # LBP variance threshold
+LIVENESS_COLOR_THRESHOLD = 0.3  # Skin tone detection threshold
+LIVENESS_SHARPNESS_THRESHOLD = 100.0  # Laplacian variance threshold
+LIVENESS_MOIRE_THRESHOLD = 0.7  # Moiré pattern detection threshold
+
+

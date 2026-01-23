@@ -110,34 +110,87 @@ def compare_faces(
 
 def verify_identity(
     id_card_image: np.ndarray, 
-    selfie_image: np.ndarray
+    selfie_image: np.ndarray,
+    check_liveness: bool = True
 ) -> Dict:
     """
     Verify identity by comparing ID card face with selfie.
     
     This is the main verification function that:
-    1. Extracts face from ID card
-    2. Extracts face from selfie
-    3. Computes similarity score
+    1. Performs liveness check on selfie (if enabled) - NON-BLOCKING
+    2. Extracts face from ID card
+    3. Extracts face from selfie
+    4. Computes similarity score
+    
+    Note: Liveness check is non-blocking - verification continues even
+    if liveness fails. The result is returned as a warning.
     
     Args:
         id_card_image: ID card image (BGR format)
         selfie_image: Selfie image (BGR format)
+        check_liveness: Whether to perform liveness check (default: True)
         
     Returns:
         Dictionary containing:
         - similarity_score: Float between 0.0 and 1.0
         - id_card_face_detected: Boolean
         - selfie_face_detected: Boolean
+        - liveness: Liveness detection result (if enabled)
         - error: String if any error occurred
     """
+    # Perform liveness check on selfie (non-blocking)
+    liveness_result = None
+    if check_liveness:
+        try:
+            from .liveness_service import detect_spoof, is_liveness_enabled
+            if is_liveness_enabled():
+                liveness_result = detect_spoof(selfie_image)
+        except ImportError:
+            # Liveness service not available, continue without it
+            pass
+        except Exception as e:
+            # Liveness check failed, continue with verification
+            liveness_result = {
+                "is_live": False,
+                "confidence": 0.0,
+                "spoof_probability": 1.0,
+                "checks": {},
+                "error": f"Liveness check error: {str(e)}"
+            }
+    
+    # Perform face comparison
     result = compare_faces(id_card_image, selfie_image)
     
-    # Rename keys for clarity
+    # Same-source detection: If similarity is TOO high (>95%), 
+    # it's likely the selfie is cropped from the ID card itself
+    SAME_SOURCE_THRESHOLD = 0.95
+    similarity = result["similarity_score"]
+    
+    if liveness_result is not None and similarity > SAME_SOURCE_THRESHOLD:
+        # Update liveness result to reflect same-source detection
+        liveness_result["checks"]["same_source"] = {
+            "passed": False,
+            "score": float(round(similarity, 3)),
+            "threshold": float(SAME_SOURCE_THRESHOLD)
+        }
+        # Recalculate confidence with the additional failed check
+        passed_count = sum(1 for c in liveness_result["checks"].values() if c.get("passed", False))
+        total_checks = len(liveness_result["checks"])
+        new_confidence = passed_count / total_checks if total_checks > 0 else 0.0
+        
+        liveness_result["confidence"] = float(round(new_confidence, 3))
+        liveness_result["spoof_probability"] = float(round(1.0 - new_confidence, 3))
+        liveness_result["is_live"] = bool(new_confidence >= 0.7)  # Use 70% threshold
+        
+        if not liveness_result.get("error"):
+            liveness_result["error"] = "Possible ID card photo crop detected (similarity too high)"
+    
+    # Return combined result
     return {
         "similarity_score": result["similarity_score"],
         "id_card_face_detected": result["image1_face_detected"],
         "selfie_face_detected": result["image2_face_detected"],
+        "liveness": liveness_result,
         "error": result["error"]
     }
 
