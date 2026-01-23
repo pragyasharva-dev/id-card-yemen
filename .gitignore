@@ -109,3 +109,6 @@ data/selfies/*.png
 services/webhook_service.py
 config/webhook_config.py
 *.rar
+
+# models
+*.pt
