@@ -173,14 +173,13 @@ def verify_identity(
             "score": float(round(similarity, 3)),
             "threshold": float(SAME_SOURCE_THRESHOLD)
         }
-        # Recalculate confidence with the additional failed check
-        passed_count = sum(1 for c in liveness_result["checks"].values() if c.get("passed", False))
-        total_checks = len(liveness_result["checks"])
-        new_confidence = passed_count / total_checks if total_checks > 0 else 0.0
         
-        liveness_result["confidence"] = float(round(new_confidence, 3))
-        liveness_result["spoof_probability"] = float(round(1.0 - new_confidence, 3))
-        liveness_result["is_live"] = bool(new_confidence >= 0.7)  # Use 70% threshold
+        # CRITICAL: Same-source detection is a HARD FAIL
+        # If the selfie is cropped from the ID card, liveness MUST fail
+        # regardless of how many other checks pass
+        liveness_result["is_live"] = False
+        liveness_result["spoof_probability"] = 0.9  # High spoof probability
+        liveness_result["confidence"] = 0.1  # Very low confidence in liveness
         
         if not liveness_result.get("error"):
             liveness_result["error"] = "Possible ID card photo crop detected (similarity too high)"

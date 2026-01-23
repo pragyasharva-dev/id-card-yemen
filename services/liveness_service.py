@@ -250,6 +250,17 @@ def detect_spoof(image: np.ndarray) -> Dict:
         checks = {}
         scores = []
         
+        # 0. Image Size Check (prevent tiny cropped images)
+        h, w = gray.shape[:2]
+        MIN_SIZE = 100  # Minimum dimension in pixels
+        size_passed = bool(h >= MIN_SIZE and w >= MIN_SIZE)
+        checks["image_size"] = {
+            "passed": size_passed,
+            "score": float(min(h, w)),
+            "threshold": float(MIN_SIZE)
+        }
+        scores.append(1.0 if size_passed else 0.0)
+        
         # 1. Texture Analysis (LBP)
         texture_score = compute_lbp_texture_score(gray)
         texture_passed = bool(texture_score > LIVENESS_TEXTURE_THRESHOLD)
@@ -289,6 +300,35 @@ def detect_spoof(image: np.ndarray) -> Dict:
             "threshold": float(LIVENESS_MOIRE_THRESHOLD)
         }
         scores.append(1.0 if moire_passed else 0.0)
+        
+        # 5. ML-based Anti-Spoofing Model (if available)
+        try:
+            from .antispoof_model import predict_spoof, is_model_available
+            ml_result = predict_spoof(image)
+            
+            # Only add to checks if model actually ran (not just fallback)
+            if ml_result.get("model_used") not in ["none", "error"]:
+                ml_passed = ml_result.get("is_real", False)
+                ml_spoof_prob = ml_result.get("spoof_probability", 0.5)
+                checks["ml_model"] = {
+                    "passed": bool(ml_passed),
+                    "score": float(round(1.0 - ml_spoof_prob, 3)),  # Convert to "realness" score
+                    "threshold": 0.5,
+                    "model": ml_result.get("model_used", "unknown")
+                }
+                # ML model gets equal weight (1 vote)
+                scores.append(1.0 if ml_passed else 0.0)
+        except ImportError:
+            # ML model not available, continue with basic checks
+            pass
+        except Exception as e:
+            # ML model error, continue without it
+            checks["ml_model"] = {
+                "passed": True,  # Don't penalize if model fails
+                "score": 0.5,
+                "threshold": 0.5,
+                "error": str(e)
+            }
         
         # Calculate overall confidence
         confidence = sum(scores) / len(scores) if scores else 0.0
