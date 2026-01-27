@@ -129,6 +129,7 @@ def verify_identity(
         id_card_image: ID card image (BGR format)
         selfie_image: Selfie image (BGR format)
         check_liveness: Whether to perform liveness check (default: True)
+        selfie_source: Source of the selfie image ('camera_selfie', 'selfie_upload', etc.)
         
     Returns:
         Dictionary containing:
@@ -144,7 +145,9 @@ def verify_identity(
         try:
             from .liveness_service import detect_spoof, is_liveness_enabled
             if is_liveness_enabled():
-                liveness_result = detect_spoof(selfie_image)
+                # Pass image_source for source-based gating
+                # Default to 'selfie_upload' for API uploads
+                liveness_result = detect_spoof(selfie_image, image_source="selfie_upload")
         except ImportError:
             # Liveness service not available, continue without it
             pass

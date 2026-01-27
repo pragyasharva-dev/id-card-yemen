@@ -71,9 +71,15 @@ MAX_IMAGE_SIZE = (2000, 2000)  # Maximum dimensions for processing
 # Liveness Detection Settings (Passive Anti-Spoofing)
 LIVENESS_ENABLED = True  # Enable/disable liveness checks
 LIVENESS_THRESHOLD = 0.6  # Minimum combined score to pass (0.0-1.0)
-LIVENESS_TEXTURE_THRESHOLD = 50.0  # LBP variance threshold
+LIVENESS_TEXTURE_THRESHOLD = 30.0  # LBP variance threshold
 LIVENESS_COLOR_THRESHOLD = 0.3  # Skin tone detection threshold
-LIVENESS_SHARPNESS_THRESHOLD = 100.0  # Laplacian variance threshold
-LIVENESS_MOIRE_THRESHOLD = 0.15  # Moiré pattern detection threshold (lowered)
+LIVENESS_SHARPNESS_THRESHOLD = 40.0  # Laplacian variance threshold
+LIVENESS_MOIRE_THRESHOLD = 0.15  # Moiré pattern detection threshold
+
+# Face Quality Check Settings (for ID card and selfie validation)
+FACE_QUALITY_ENABLED = True  # Enable/disable face quality checks
+FACE_QUALITY_MIN_LANDMARKS = 3  # Minimum visible landmarks (eyes, nose, mouth)
+FACE_QUALITY_MIN_CONFIDENCE = 0.5  # Minimum face detection confidence
+FACE_QUALITY_MIN_FACE_RATIO = 0.02  # Minimum face area ratio in image (2%)
 
 

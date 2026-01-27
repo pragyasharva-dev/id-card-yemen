@@ -28,6 +28,7 @@ from models.schemas import (
     BatchProcessRequest, BatchProcessResponse,
     HealthResponse, OCRResult, FaceMatchResult, LivenessResult,
     TranslateRequest, TranslateResponse, TranslatedText,
+    ImageQualityResponse,
     # Database schemas
     SaveIDCardRequest, SavePassportRequest,
     IDCardRecord, PassportRecord,
@@ -53,6 +54,7 @@ async def health_check():
     ocr_ready = False
     face_recognition_ready = False
     liveness_enabled = False
+    face_quality_enabled = False
     
     try:
         get_ocr_service()
@@ -71,12 +73,89 @@ async def health_check():
     except Exception:
         pass
     
+    try:
+        from services.image_quality_service import is_quality_check_enabled
+        face_quality_enabled = is_quality_check_enabled()
+    except Exception:
+        pass
+    
     return HealthResponse(
         status="ok",
         ocr_ready=ocr_ready,
         face_recognition_ready=face_recognition_ready,
-        liveness_enabled=liveness_enabled
+        liveness_enabled=liveness_enabled,
+        face_quality_enabled=face_quality_enabled
     )
+
+
+@router.post("/check-id-quality", response_model=ImageQualityResponse)
+async def check_id_quality_endpoint(
+    id_card: UploadFile = File(..., description="ID card/passport image")
+):
+    """
+    Validate ID card/passport image quality before verification.
+    
+    Checks that the face on the ID is clearly visible and not obscured.
+    Returns pass/fail with actionable error message for re-upload flow.
+    """
+    try:
+        from services.image_quality_service import check_id_quality
+        
+        image_bytes = await id_card.read()
+        image = load_image(image_bytes)
+        
+        result = check_id_quality(image)
+        
+        return ImageQualityResponse(
+            passed=result["passed"],
+            face_detected=result["face_detected"],
+            quality_score=result["quality_score"],
+            error=result.get("error"),
+            details=result.get("details")
+        )
+        
+    except Exception as e:
+        return ImageQualityResponse(
+            passed=False,
+            face_detected=False,
+            quality_score=0.0,
+            error=f"Quality check failed: {str(e)}"
+        )
+
+
+@router.post("/check-selfie-quality", response_model=ImageQualityResponse)
+async def check_selfie_quality_endpoint(
+    selfie: UploadFile = File(..., description="Selfie image")
+):
+    """
+    Validate selfie image quality before verification.
+    
+    Checks that the selfie shows a clearly visible face that is not obscured.
+    Returns pass/fail with actionable error message for re-upload flow.
+    """
+    try:
+        from services.image_quality_service import check_selfie_quality
+        
+        image_bytes = await selfie.read()
+        image = load_image(image_bytes)
+        
+        result = check_selfie_quality(image)
+        
+        return ImageQualityResponse(
+            passed=result["passed"],
+            face_detected=result["face_detected"],
+            quality_score=result["quality_score"],
+            error=result.get("error"),
+            details=result.get("details")
+        )
+        
+    except Exception as e:
+        return ImageQualityResponse(
+            passed=False,
+            face_detected=False,
+            quality_score=0.0,
+            error=f"Quality check failed: {str(e)}"
+        )
 
 
 @router.post("/verify", response_model=VerifyResponse)

@@ -252,12 +252,22 @@ class BatchProcessResponse(BaseModel):
     errors: List[str] = Field(default_factory=list)
 
 
+class ImageQualityResponse(BaseModel):
+    """Response for image quality check endpoints (/check-id-quality, /check-selfie-quality)."""
+    passed: bool = Field(..., description="Whether the image quality check passed")
+    face_detected: bool = Field(..., description="Whether a face was detected in the image")
+    quality_score: float = Field(..., description="Quality score (0.0-1.0)")
+    error: Optional[str] = Field(None, description="Error message if check failed")
+    details: Optional[dict] = Field(None, description="Detailed quality check breakdown")
+
+
 class HealthResponse(BaseModel):
     """Health check response."""
     status: str = "ok"
     ocr_ready: bool = False
     face_recognition_ready: bool = False
     liveness_enabled: bool = False
+    face_quality_enabled: bool = False
 
 
 # Translation schemas
