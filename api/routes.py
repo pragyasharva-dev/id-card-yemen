@@ -946,42 +946,17 @@ async def validate_id_endpoint(
 
 @router.post("/test-selfie-verification")
 async def test_selfie_verification_endpoint(
-    selfie: UploadFile = File(..., description="Selfie image"),
-    id_number: str = Form(..., description="ID number to fetch the previously uploaded ID card image")
+    selfie: UploadFile = File(..., description="Selfie image")
 ):
     """
-    🧪 TEST ENDPOINT: Selfie Verification with Auto-Fetch ID Image
+    🧪 TEST ENDPOINT: Simple image upload check.
     
-    Fetches the ID card image that was previously uploaded during OCR,
-    then compares it with the provided selfie.
-    
-    **How it works:**
-    1. Uses the ID number to find the ID card image in processed directory
-    2. Compares the face on the ID with the selfie
-    3. Returns filenames for confirmation
+    Just returns the filename to confirm the API is receiving files.
     """
-    from pathlib import Path
-    
-    # Find the ID card image in PROCESSED_DIR
-    id_image_path = None
-    for file in PROCESSED_DIR.glob(f"{id_number}_front_*"):
-        id_image_path = file
-        break  # Get the first (most recent) match
-    
-    if id_image_path is None:
-        return {
-            "success": False,
-            "message": f"No ID card image found for ID number: {id_number}",
-            "id_number": id_number,
-            "selfie_filename": selfie.filename,
-            "id_image_found": None
-        }
-    
     return {
         "success": True,
-        "message": "API hit successfully - ID image found",
-        "id_number": id_number,
-        "selfie_filename": selfie.filename,
-        "id_image_found": id_image_path.name
+        "message": "Image received successfully",
+        "filename": selfie.filename
     }
+
 
