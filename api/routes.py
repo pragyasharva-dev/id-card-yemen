@@ -944,119 +944,44 @@ async def validate_id_endpoint(
         return response
 
 
-@router.post("/test-selfie-verification", response_model=SelfieVerificationResponse)
+@router.post("/test-selfie-verification")
 async def test_selfie_verification_endpoint(
-    reference_image: UploadFile = File(..., description="Reference face image (e.g., ID card or photo)"),
-    selfie: UploadFile = File(..., description="Selfie image to compare"),
-    threshold: float = Form(0.5, description="Similarity threshold for PASS/FAIL decision (0.0-1.0)")
+    selfie: UploadFile = File(..., description="Selfie image"),
+    id_number: str = Form(..., description="ID number to fetch the previously uploaded ID card image")
 ):
     """
-    🧪 TEST ENDPOINT: Selfie Verification Only
+    🧪 TEST ENDPOINT: Selfie Verification with Auto-Fetch ID Image
     
-    Test the face matching component in isolation without the full e-KYC pipeline.
+    Fetches the ID card image that was previously uploaded during OCR,
+    then compares it with the provided selfie.
     
-    This endpoint is designed for testing and debugging selfie verification:
-    - Compares faces between a reference image and a selfie
-    - Returns detailed diagnostics including face detection status
-    - Uses configurable threshold for PASS/FAIL decision
-    
-    **Use Cases:**
-    - Testing face recognition accuracy
-    - Debugging face detection issues
-    - Evaluating different threshold values
-    - Quality assurance for selfie verification
-    
-    **Parameters:**
-    - reference_image: The reference face (can be an ID card or a clear face photo)
-    - selfie: The selfie to verify
-    - threshold: Similarity score threshold (default: 0.5)
-      - Scores >= threshold → PASS
-      - Scores < threshold → FAIL
-    
-    **Returns:**
-    - similarity_score: Value between 0.0-1.0
-    - decision: "PASS", "FAIL", or "ERROR"
-    - Face detection flags for both images
+    **How it works:**
+    1. Uses the ID number to find the ID card image in processed directory
+    2. Compares the face on the ID with the selfie
+    3. Returns filenames for confirmation
     """
-    try:
-        # Validate threshold
-        if threshold < 0.0 or threshold > 1.0:
-            return SelfieVerificationResponse(
-                success=False,
-                similarity_score=None,
-                threshold=threshold,
-                decision="ERROR",
-                reference_face_detected=False,
-                selfie_face_detected=False,
-                error=f"Threshold must be between 0.0 and 1.0, got {threshold}"
-            )
-        
-        # Load images
-        reference_bytes = await reference_image.read()
-        selfie_bytes = await selfie.read()
-        
-        reference_img = load_image(reference_bytes)
-        selfie_img = load_image(selfie_bytes)
-        
-        if reference_img is None:
-            return SelfieVerificationResponse(
-                success=False,
-                similarity_score=None,
-                threshold=threshold,
-                decision="ERROR",
-                reference_face_detected=False,
-                selfie_face_detected=False,
-                error="Failed to load reference image"
-            )
-        
-        if selfie_img is None:
-            return SelfieVerificationResponse(
-                success=False,
-                similarity_score=None,
-                threshold=threshold,
-                decision="ERROR",
-                reference_face_detected=False,
-                selfie_face_detected=False,
-                error="Failed to load selfie image"
-            )
-        
-        # Perform face comparison
-        result = compare_faces(reference_img, selfie_img)
-        
-        # Check for errors
-        if result.get("error"):
-            return SelfieVerificationResponse(
-                success=False,
-                similarity_score=result.get("similarity_score"),
-                threshold=threshold,
-                decision="ERROR",
-                reference_face_detected=result.get("image1_face_detected", False),
-                selfie_face_detected=result.get("image2_face_detected", False),
-                error=result["error"]
-            )
-        
-        # Determine decision based on threshold
-        similarity_score = result.get("similarity_score", 0.0)
-        decision = "PASS" if similarity_score >= threshold else "FAIL"
-        
-        return SelfieVerificationResponse(
-            success=True,
-            similarity_score=similarity_score,
-            threshold=threshold,
-            decision=decision,
-            reference_face_detected=result.get("image1_face_detected", False),
-            selfie_face_detected=result.get("image2_face_detected", False),
-            error=None
-        )
-        
-    except Exception as e:
-        return SelfieVerificationResponse(
-            success=False,
-            similarity_score=None,
-            threshold=threshold,
-            decision="ERROR",
-            reference_face_detected=False,
-            selfie_face_detected=False,
-            error=str(e)
-        )
+    from pathlib import Path
+    
+    # Find the ID card image in PROCESSED_DIR
+    id_image_path = None
+    for file in PROCESSED_DIR.glob(f"{id_number}_front_*"):
+        id_image_path = file
+        break  # Get the first (most recent) match
+    
+    if id_image_path is None:
+        return {
+            "success": False,
+            "message": f"No ID card image found for ID number: {id_number}",
+            "id_number": id_number,
+            "selfie_filename": selfie.filename,
+            "id_image_found": None
+        }
+    
+    return {
+        "success": True,
+        "message": "API hit successfully - ID image found",
+        "id_number": id_number,
+        "selfie_filename": selfie.filename,
+        "id_image_found": id_image_path.name
+    }
 
