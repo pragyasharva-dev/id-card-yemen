@@ -24,7 +24,8 @@ from models.schemas import (
     HealthResponse, OCRResult, FaceMatchResult,
     TranslateRequest, TranslateResponse, TranslatedText,
     IDFormSubmitRequest, IDFormSubmitResponse,
-    FormOCRComparisonRequest, FormOCRComparisonResponse
+    FormOCRComparisonRequest, FormOCRComparisonResponse,
+    SelfieVerificationResponse
 )
 from services.ocr_service import extract_id_from_image, get_ocr_service
 from services.face_recognition import verify_identity, compare_faces, is_ready as face_ready
@@ -941,4 +942,121 @@ async def validate_id_endpoint(
         import traceback
         response["traceback"] = traceback.format_exc()
         return response
+
+
+@router.post("/test-selfie-verification", response_model=SelfieVerificationResponse)
+async def test_selfie_verification_endpoint(
+    reference_image: UploadFile = File(..., description="Reference face image (e.g., ID card or photo)"),
+    selfie: UploadFile = File(..., description="Selfie image to compare"),
+    threshold: float = Form(0.5, description="Similarity threshold for PASS/FAIL decision (0.0-1.0)")
+):
+    """
+    🧪 TEST ENDPOINT: Selfie Verification Only
+    
+    Test the face matching component in isolation without the full e-KYC pipeline.
+    
+    This endpoint is designed for testing and debugging selfie verification:
+    - Compares faces between a reference image and a selfie
+    - Returns detailed diagnostics including face detection status
+    - Uses configurable threshold for PASS/FAIL decision
+    
+    **Use Cases:**
+    - Testing face recognition accuracy
+    - Debugging face detection issues
+    - Evaluating different threshold values
+    - Quality assurance for selfie verification
+    
+    **Parameters:**
+    - reference_image: The reference face (can be an ID card or a clear face photo)
+    - selfie: The selfie to verify
+    - threshold: Similarity score threshold (default: 0.5)
+      - Scores >= threshold → PASS
+      - Scores < threshold → FAIL
+    
+    **Returns:**
+    - similarity_score: Value between 0.0-1.0
+    - decision: "PASS", "FAIL", or "ERROR"
+    - Face detection flags for both images
+    """
+    try:
+        # Validate threshold
+        if threshold < 0.0 or threshold > 1.0:
+            return SelfieVerificationResponse(
+                success=False,
+                similarity_score=None,
+                threshold=threshold,
+                decision="ERROR",
+                reference_face_detected=False,
+                selfie_face_detected=False,
+                error=f"Threshold must be between 0.0 and 1.0, got {threshold}"
+            )
+        
+        # Load images
+        reference_bytes = await reference_image.read()
+        selfie_bytes = await selfie.read()
+        
+        reference_img = load_image(reference_bytes)
+        selfie_img = load_image(selfie_bytes)
+        
+        if reference_img is None:
+            return SelfieVerificationResponse(
+                success=False,
+                similarity_score=None,
+                threshold=threshold,
+                decision="ERROR",
+                reference_face_detected=False,
+                selfie_face_detected=False,
+                error="Failed to load reference image"
+            )
+        
+        if selfie_img is None:
+            return SelfieVerificationResponse(
+                success=False,
+                similarity_score=None,
+                threshold=threshold,
+                decision="ERROR",
+                reference_face_detected=False,
+                selfie_face_detected=False,
+                error="Failed to load selfie image"
+            )
+        
+        # Perform face comparison
+        result = compare_faces(reference_img, selfie_img)
+        
+        # Check for errors
+        if result.get("error"):
+            return SelfieVerificationResponse(
+                success=False,
+                similarity_score=result.get("similarity_score"),
+                threshold=threshold,
+                decision="ERROR",
+                reference_face_detected=result.get("image1_face_detected", False),
+                selfie_face_detected=result.get("image2_face_detected", False),
+                error=result["error"]
+            )
+        
+        # Determine decision based on threshold
+        similarity_score = result.get("similarity_score", 0.0)
+        decision = "PASS" if similarity_score >= threshold else "FAIL"
+        
+        return SelfieVerificationResponse(
+            success=True,
+            similarity_score=similarity_score,
+            threshold=threshold,
+            decision=decision,
+            reference_face_detected=result.get("image1_face_detected", False),
+            selfie_face_detected=result.get("image2_face_detected", False),
+            error=None
+        )
+        
+    except Exception as e:
+        return SelfieVerificationResponse(
+            success=False,
+            similarity_score=None,
+            threshold=threshold,
+            decision="ERROR",
+            reference_face_detected=False,
+            selfie_face_detected=False,
+            error=str(e)
+        )
 

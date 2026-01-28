@@ -370,3 +370,54 @@ class FormOCRComparisonResponse(BaseModel):
     summary: FormOCRComparisonSummary
     recommendations: List[str]
 
+
+# Selfie Verification Test Schemas
+class SelfieVerificationResponse(BaseModel):
+    """
+    Response model for the /test-selfie-verification endpoint.
+    
+    Provides detailed face matching results for testing selfie verification
+    in isolation without the full e-KYC pipeline.
+    """
+    success: bool = Field(
+        ...,
+        description="Whether the verification process completed successfully"
+    )
+    similarity_score: Optional[float] = Field(
+        None,
+        description="Face similarity score between 0.0 and 1.0"
+    )
+    threshold: float = Field(
+        0.5,
+        description="Threshold used for pass/fail decision"
+    )
+    decision: Literal["PASS", "FAIL", "ERROR"] = Field(
+        ...,
+        description="Verification decision based on threshold"
+    )
+    reference_face_detected: bool = Field(
+        False,
+        description="Whether a face was detected in the reference image"
+    )
+    selfie_face_detected: bool = Field(
+        False,
+        description="Whether a face was detected in the selfie image"
+    )
+    error: Optional[str] = Field(
+        None,
+        description="Error message if verification failed"
+    )
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "success": True,
+                "similarity_score": 0.87,
+                "threshold": 0.5,
+                "decision": "PASS",
+                "reference_face_detected": True,
+                "selfie_face_detected": True,
+                "error": None
+            }
+        }
+
