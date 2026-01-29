@@ -39,7 +39,6 @@ except ImportError:
 
 from utils.config import (
     LIVENESS_ENABLED,
-    LIVENESS_THRESHOLD,
     LIVENESS_TEXTURE_THRESHOLD,
     LIVENESS_COLOR_THRESHOLD,
     LIVENESS_SHARPNESS_THRESHOLD,
@@ -56,16 +55,6 @@ class ImageSource(str, Enum):
     SCREENSHOT = "screenshot"          # Screenshot - hard fail
     UNKNOWN = "unknown"                # Unknown source - run checks
 
-
-# Weighted voting configuration
-WEIGHTS = {
-    "image_size": 0.10,   # Low - just a sanity check
-    "texture": 0.20,      # Medium-high - strong spoof indicator  
-    "color": 0.15,        # Medium - skin analysis
-    "sharpness": 0.15,    # Medium - device-dependent
-    "reflection": 0.15,   # Medium - screen detection (moiré)
-    "ml_model": 0.25      # High - combines multiple signals
-}
 
 # Minimum image size for camera selfies (hard rule)
 MIN_CAMERA_SELFIE_SIZE = 160
@@ -416,7 +405,6 @@ def detect_spoof(image: np.ndarray, image_source: str = "unknown") -> Dict:
             gray = image.copy()
         
         checks = {}
-        weighted_scores = []
         
         # Detect face ROI for color analysis
         face_roi = detect_face_roi(image)
@@ -431,7 +419,6 @@ def detect_spoof(image: np.ndarray, image_source: str = "unknown") -> Dict:
             "score": float(min(h, w)),
             "threshold": float(MIN_SIZE)
         }
-        weighted_scores.append((1.0 if size_passed else 0.0, WEIGHTS["image_size"]))
         
         # 1. Texture Analysis (LBP) - Fast skimage version
         texture_score = compute_lbp_texture_score(gray)
@@ -441,7 +428,6 @@ def detect_spoof(image: np.ndarray, image_source: str = "unknown") -> Dict:
             "score": float(round(texture_score, 2)),
             "threshold": float(LIVENESS_TEXTURE_THRESHOLD)
         }
-        weighted_scores.append((1.0 if texture_passed else 0.0, WEIGHTS["texture"]))
         
         # 2. Color Distribution (Face ROI only)
         color_score = analyze_color_distribution(image, face_roi)
@@ -451,7 +437,6 @@ def detect_spoof(image: np.ndarray, image_source: str = "unknown") -> Dict:
             "score": float(round(color_score, 3)),
             "threshold": float(LIVENESS_COLOR_THRESHOLD)
         }
-        weighted_scores.append((1.0 if color_passed else 0.0, WEIGHTS["color"]))
         
         # 3. Sharpness Analysis (Normalized)
         sharpness_score = check_image_sharpness(gray, normalize=True)
@@ -461,7 +446,6 @@ def detect_spoof(image: np.ndarray, image_source: str = "unknown") -> Dict:
             "score": float(round(sharpness_score, 2)),
             "threshold": float(LIVENESS_SHARPNESS_THRESHOLD)
         }
-        weighted_scores.append((1.0 if sharpness_passed else 0.0, WEIGHTS["sharpness"]))
         
         # 4. Moiré Pattern Detection (with Hann window)
         moire_score = detect_moire_patterns(gray)
@@ -471,10 +455,8 @@ def detect_spoof(image: np.ndarray, image_source: str = "unknown") -> Dict:
             "score": float(round(moire_score, 3)),
             "threshold": float(LIVENESS_MOIRE_THRESHOLD)
         }
-        weighted_scores.append((1.0 if moire_passed else 0.0, WEIGHTS["reflection"]))
         
         # 5. ML-based Anti-Spoofing Model (if available)
-        ml_weight = WEIGHTS["ml_model"]
         try:
             from .antispoof_model import predict_spoof as ml_predict
             ml_result = ml_predict(image)
@@ -489,9 +471,8 @@ def detect_spoof(image: np.ndarray, image_source: str = "unknown") -> Dict:
                     "threshold": 0.5,
                     "model": ml_result.get("model_used", "unknown")
                 }
-                weighted_scores.append((1.0 if ml_passed else 0.0, ml_weight))
         except ImportError:
-            # ML model not available, redistribute its weight
+            # ML model not available
             pass
         except Exception as e:
             checks["ml_model"] = {
@@ -501,15 +482,44 @@ def detect_spoof(image: np.ndarray, image_source: str = "unknown") -> Dict:
                 "error": str(e)
             }
         
-        # Calculate weighted confidence
-        total_weight = sum(w for _, w in weighted_scores)
-        if total_weight > 0:
-            confidence = sum(score * weight for score, weight in weighted_scores) / total_weight
-        else:
-            confidence = 0.0
+        # ========================================
+        # STRICT MODE: ALL checks must pass
+        # ========================================
+        # Instead of weighted voting, require ALL checks to pass
         
-        # Determine if live based on threshold
-        is_live = bool(confidence >= LIVENESS_THRESHOLD)
+        # Collect all check results (excluding ML model as optional)
+        core_checks = [
+            ("image_size", size_passed),
+            ("texture", texture_passed),
+            ("color", color_passed),
+            ("sharpness", sharpness_passed),
+            ("reflection", moire_passed),
+        ]
+        
+        # Check if ML model check exists and passed
+        ml_passed = checks.get("ml_model", {}).get("passed", True)  # Default to True if not available
+        
+        # Count passed checks
+        passed_count = sum(1 for _, passed in core_checks if passed)
+        total_core = len(core_checks)
+        
+        # ALL core checks must pass
+        all_core_passed = all(passed for _, passed in core_checks)
+        
+        # Final decision: all core checks + ML must pass
+        is_live = all_core_passed and ml_passed
+        
+        # Calculate confidence based on passed ratio
+        total_checks = total_core + (1 if "ml_model" in checks else 0)
+        passed_total = passed_count + (1 if ml_passed else 0)
+        confidence = passed_total / total_checks if total_checks > 0 else 0.0
+        
+        # If not live, add error message listing failed checks
+        if not is_live:
+            failed_checks = [name for name, passed in core_checks if not passed]
+            if not ml_passed:
+                failed_checks.append("ml_model")
+            result["error"] = f"Failed checks: {', '.join(failed_checks)}"
         
         result["is_live"] = is_live
         result["confidence"] = float(round(confidence, 3))
