@@ -9,26 +9,13 @@ Detection Techniques:
 - Color Distribution - Checks for natural skin tone variations
 - Sharpness Analysis - Detects photos-of-photos (typically blurrier)
 - Moiré Pattern Detection - Detects screen captures via FFT
+- ML Model - Deep learning based spoof detection
 
-Note: This is NON-BLOCKING - verification continues even if liveness fails.
-The result is returned as a warning to the caller.
-
-Optimizations (v2):
-- Fast LBP using skimage instead of nested loops
-- Color analysis applied to face ROI only
-- Sharpness normalized by image size
-- FFT with Hann window for stability
-- Weighted voting instead of equal voting
-
-v3 - Image Source Gate:
-- Liveness detection is conditional based on image source
-- ID documents and screenshots are hard-rejected
-- Camera selfies get full liveness checks
+Strict Mode: ALL checks must pass for liveness to pass.
 """
 import cv2
 import numpy as np
 from typing import Dict, Optional, Tuple
-from enum import Enum
 
 # Fast LBP from skimage
 try:
@@ -46,18 +33,8 @@ from utils.config import (
 )
 
 
-# Image source classification
-class ImageSource(str, Enum):
-    """Classification of image source for liveness gating."""
-    ID_DOCUMENT = "id_document"       # Photo from ID card - skip liveness
-    SELFIE_UPLOAD = "selfie_upload"   # Uploaded selfie from gallery - soft check
-    CAMERA_SELFIE = "camera_selfie"   # Live camera capture - full check
-    SCREENSHOT = "screenshot"          # Screenshot - hard fail
-    UNKNOWN = "unknown"                # Unknown source - run checks
-
-
-# Minimum image size for camera selfies (hard rule)
-MIN_CAMERA_SELFIE_SIZE = 160
+# Minimum image size for selfies
+MIN_SELFIE_SIZE = 160
 
 
 def compute_lbp_texture_score(gray_image: np.ndarray) -> float:
@@ -317,19 +294,15 @@ def detect_moire_patterns(gray_image: np.ndarray) -> float:
     return 0.5
 
 
-def detect_spoof(image: np.ndarray, image_source: str = "unknown") -> Dict:
+def detect_spoof(image: np.ndarray) -> Dict:
     """
-    Main passive liveness detection function with source-based gating.
+    Passive liveness detection for selfie images.
     
-    IMPORTANT: Liveness detection is conditional based on image source.
-    - ID documents and screenshots are hard-rejected
-    - Camera selfies get full liveness checks
-    - Gallery uploads get soft checks
+    Runs 6 checks to determine if a selfie is from a live person.
+    ALL checks must pass for liveness to pass (strict mode).
     
     Args:
         image: Input selfie image (BGR format)
-        image_source: One of 'id_document', 'selfie_upload', 'camera_selfie', 
-                      'screenshot', or 'unknown'
         
     Returns:
         Dictionary containing:
@@ -338,64 +311,38 @@ def detect_spoof(image: np.ndarray, image_source: str = "unknown") -> Dict:
         - spoof_probability: Probability of spoof (0.0-1.0)
         - checks: Individual check results with scores
         - error: Error message if detection failed
-        - applied: Boolean indicating if liveness was actually applied
-        - source: The image source that was evaluated
     """
     result = {
         "is_live": False,
         "confidence": 0.0,
         "spoof_probability": 1.0,
         "checks": {},
-        "error": None,
-        "applied": True,
-        "source": image_source
+        "error": None
     }
     
-    # ========================================
-    # LAYER 0: SOURCE GATE (MANDATORY)
-    # ========================================
-    
-    # Hard reject: ID documents should never pass liveness
-    if image_source == ImageSource.ID_DOCUMENT.value or image_source == "id_document":
-        result["is_live"] = False
-        result["confidence"] = 0.0
-        result["spoof_probability"] = 1.0
-        result["applied"] = False
-        result["error"] = "Liveness not applicable for ID document images"
-        return result
-    
-    # Hard reject: Screenshots are always spoofs
-    if image_source == ImageSource.SCREENSHOT.value or image_source == "screenshot":
-        result["is_live"] = False
-        result["confidence"] = 0.0
-        result["spoof_probability"] = 1.0
-        result["applied"] = True
-        result["error"] = "Screenshot detected - not a live capture"
-        return result
-    
+    # Validate image
     if image is None or image.size == 0:
         result["error"] = "Invalid image provided"
         return result
     
-    # Get image dimensions early
+    # Get image dimensions
     h, w = image.shape[:2]
     
-    # Hard rule: Camera selfies must meet minimum size
-    if image_source == ImageSource.CAMERA_SELFIE.value or image_source == "camera_selfie":
-        if min(h, w) < MIN_CAMERA_SELFIE_SIZE:
-            result["is_live"] = False
-            result["confidence"] = 0.0
-            result["spoof_probability"] = 1.0
-            result["checks"] = {
-                "image_size": {
-                    "passed": False,
-                    "score": float(min(h, w)),
-                    "threshold": float(MIN_CAMERA_SELFIE_SIZE),
-                    "reason": "too_small_for_live_selfie"
-                }
+    # Minimum size check - reject tiny/cropped images
+    if min(h, w) < MIN_SELFIE_SIZE:
+        result["is_live"] = False
+        result["confidence"] = 0.0
+        result["spoof_probability"] = 1.0
+        result["checks"] = {
+            "image_size": {
+                "passed": False,
+                "score": float(min(h, w)),
+                "threshold": float(MIN_SELFIE_SIZE),
+                "reason": "image_too_small"
             }
-            result["error"] = "Invalid live selfie - image too small (likely cropped)"
-            return result
+        }
+        result["error"] = "Image too small - minimum 160px required"
+        return result
     
     try:
         # Convert to grayscale for analysis
