@@ -22,6 +22,24 @@ os.environ["DISABLE_MODEL_SOURCE_CHECK"] = "True"
 
 from paddleocr import PaddleOCR
 
+# Try to import Tesseract for digit validation
+try:
+    import pytesseract
+    # Configure Tesseract path for Windows
+    import platform
+    if platform.system() == 'Windows':
+        tesseract_paths = [
+            r'C:\Program Files\Tesseract-OCR\tesseract.exe',
+            r'C:\Program Files (x86)\Tesseract-OCR\tesseract.exe',
+        ]
+        for path in tesseract_paths:
+            if Path(path).exists():
+                pytesseract.pytesseract.tesseract_cmd = path
+                break
+    TESSERACT_AVAILABLE = True
+except ImportError:
+    TESSERACT_AVAILABLE = False
+
 from utils.config import ID_PATTERNS, OCR_CONFIDENCE_THRESHOLD
 
 
@@ -188,6 +206,34 @@ class OCRService:
         # Convert back to BGR for OCR
         return cv2.cvtColor(sharpened, cv2.COLOR_GRAY2BGR)
     
+    def preprocess_digits(self, image: np.ndarray) -> np.ndarray:
+        """
+        Special preprocessing for digit fields (dates).
+        Uses padding instead of upscaling to preserve pixel geometry.
+        """
+        h, w = image.shape[:2]
+        
+        # Add white padding on ALL sides (10% or minimum 10px)
+        # This prevents PaddleOCR from clipping leftmost/rightmost chars
+        pad_x = max(10, int(w * 0.10))
+        pad_y = max(10, int(h * 0.10))
+        padded = cv2.copyMakeBorder(
+            image,
+            pad_y, pad_y, pad_x, pad_x,  # top, bottom, left, right
+            cv2.BORDER_CONSTANT,
+            value=(255, 255, 255)  # white background
+        )
+        
+        # Convert to grayscale for contrast enhancement
+        gray = cv2.cvtColor(padded, cv2.COLOR_BGR2GRAY)
+        
+        # Apply CLAHE for better contrast (gentler settings)
+        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+        enhanced = clahe.apply(gray)
+        
+        # Convert back to BGR
+        return cv2.cvtColor(enhanced, cv2.COLOR_GRAY2BGR)
+    
     def extract_text_with_lang(
         self, 
         image: np.ndarray, 
@@ -315,12 +361,39 @@ class OCRService:
     
     def process_id_card(
         self, 
-        image: np.ndarray
+        image: np.ndarray,
+        side: str = "front"
     ) -> Dict:
         """
         Process an ID card image and extract the unique ID using multilingual OCR.
+        
+        Uses YOLO layout detection first for targeted OCR on detected fields.
+        Falls back to full-image OCR if YOLO detection fails or is unavailable.
+        
+        Args:
+            image: Input image (BGR format)
+            side: Card side - "front" or "back"
+            
+        Returns:
+            Dictionary with extracted fields and metadata
         """
-        # Extract all text with multilingual OCR
+        from services.layout_service import get_layout_service, is_layout_available
+        
+        layout_fields = {}
+        extraction_method = "fallback"
+        
+        # Step 1: Try YOLO layout detection
+        model_key = f"yemen_id_{side}"
+        if is_layout_available(model_key):
+            layout_service = get_layout_service()
+            layout_fields = layout_service.detect_layout(image, model_key)
+            
+            # If we detected key fields, use targeted extraction
+            if layout_fields:
+                extraction_method = "yolo"
+                return self._extract_from_layout(image, layout_fields, side)
+        
+        # Step 2: Fallback to full-image OCR
         text_results, detected_langs, detected_langs_display = self.extract_text_multilingual(image)
         
         # Simple text list for backward compatibility
@@ -336,7 +409,202 @@ class OCRService:
             "all_texts": all_texts,
             "text_results": text_results,
             "detected_languages": detected_langs,
-            "detected_languages_display": detected_langs_display
+            "detected_languages_display": detected_langs_display,
+            "extraction_method": extraction_method,
+            "layout_fields": {}
+        }
+    
+    def _extract_from_layout(
+        self,
+        image: np.ndarray,
+        layout_fields: Dict,
+        side: str
+    ) -> Dict:
+        """
+        Extract text from YOLO-detected field regions using targeted OCR.
+        
+        Uses field-specific OCR languages for better accuracy:
+        - Arabic fields: name, POB, issuing_authority
+        - English/numeric fields: DOB, unique_id, expiry_data, issue_date
+        
+        Args:
+            image: Original image
+            layout_fields: Dict of label -> LayoutField from YOLO detection
+            side: Card side ("front" or "back")
+            
+        Returns:
+            Dictionary with extracted fields
+        """
+        # Field-to-language mapping for optimal OCR performance
+        FIELD_LANGUAGES = {
+            'name': ['ar'],              # Arabic names only
+            'POB': ['ar'],               # Place of birth in Arabic
+            'issuing_authority': ['ar'], # Arabic authority name
+            'DOB': ['en'],               # Date format (numbers)
+            'unique_id': ['en'],         # ID number (digits)
+            'expiry_data': ['en'],       # Date format
+            'issue_date': ['en'],        # Date format
+        }
+        
+        # Fields to skip (detection only, no OCR needed)
+        SKIP_OCR_FIELDS = {'id_card'}
+        
+        extracted = {}
+        text_results = []
+        
+        # Process each detected field
+        for label, field in layout_fields.items():
+            # Skip fields that don't need OCR
+            if label in SKIP_OCR_FIELDS:
+                extracted[label] = {
+                    "text": "",
+                    "confidence": field.confidence,
+                    "box": field.box,
+                    "ocr_lang": [],
+                    "skipped": True
+                }
+                continue
+            
+            crop = field.crop
+            
+            # Get OCR languages for this field
+            ocr_langs = FIELD_LANGUAGES.get(label, ['en'])
+            
+            # Apply special preprocessing only for date fields (not unique_id - raw works better)
+            DATE_FIELDS = {'DOB', 'expiry_data', 'issue_date'}
+            if label in DATE_FIELDS:
+                crop = self.preprocess_digits(crop)
+            elif label == 'unique_id':
+                # FIXED OCR PIPELINE for unique_id (critical for eKYC)
+                # Key principles:
+                # 1. NO upscaling - preserves original pixel geometry
+                # 2. PAD ALL SIDES - PaddleOCR clips edge chars without margin
+                # 3. PaddleOCR only - CNN-based, robust to blur
+                # 4. Length validation - Yemen ID is 11 digits
+                
+                h, w = crop.shape[:2]
+                
+                # Add white padding on ALL sides (10% or minimum 10px)
+                # This prevents PaddleOCR from clipping leftmost/rightmost chars
+                pad_x = max(10, int(w * 0.10))
+                pad_y = max(10, int(h * 0.10))
+                ocr_crop = cv2.copyMakeBorder(
+                    crop,
+                    pad_y, pad_y, pad_x, pad_x,  # top, bottom, left, right
+                    cv2.BORDER_CONSTANT,
+                    value=(255, 255, 255)  # white background
+                )
+                
+                # OCR on padded crop
+                paddle_digits = []
+                paddle_results = self.extract_text_with_lang(ocr_crop, 'en')
+                for r in paddle_results:
+                    digits = re.sub(r'[^0-9]', '', r['text'])
+                    if len(digits) >= 8:
+                        paddle_digits.append(digits)
+                
+                # Also try grayscale version (sometimes helps with low contrast)
+                gray = cv2.cvtColor(ocr_crop, cv2.COLOR_BGR2GRAY)
+                gray_bgr = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
+                paddle_gray = self.extract_text_with_lang(gray_bgr, 'en')
+                for r in paddle_gray:
+                    digits = re.sub(r'[^0-9]', '', r['text'])
+                    if len(digits) >= 8:
+                        paddle_digits.append(digits)
+                
+                # Select best result with validation
+                # Priority: exact 11 digits > longest valid sequence
+                final_id = ""
+                for candidate in sorted(paddle_digits, key=len, reverse=True):
+                    if len(candidate) == 11:
+                        final_id = candidate
+                        break
+                    elif len(candidate) > len(final_id):
+                        final_id = candidate
+                
+                # Validation status
+                validation = "valid" if len(final_id) == 11 else f"incomplete_{len(final_id)}_digits"
+                
+                extracted[label] = {
+                    "text": final_id,
+                    "confidence": field.confidence,
+                    "box": field.box,
+                    "ocr_lang": ['en'],
+                    "validation": validation,
+                    "candidates": paddle_digits
+                }
+                continue  # Skip normal processing for unique_id
+            
+            # Run OCR with specified language(s)
+            crop_results = []
+            for lang in ocr_langs:
+                results = self.extract_text_with_lang(crop, lang)
+                # Filter: for Arabic OCR, only keep texts with actual Arabic chars
+                # For English OCR on date/ID fields, only keep texts with digits
+                for r in results:
+                    text = r['text']
+                    if lang == 'ar':
+                        # Must have at least some Arabic characters
+                        arabic_chars = len(re.findall(r'[\u0600-\u06FF]', text))
+                        if arabic_chars >= 2:
+                            crop_results.append(r)
+                    elif lang == 'en':
+                        # For date/ID fields, accept if it has digits or standard chars
+                        if label in ('DOB', 'unique_id', 'expiry_data', 'issue_date'):
+                            # Accept if mostly digits or date format
+                            if re.search(r'\d', text):
+                                crop_results.append(r)
+                        else:
+                            crop_results.append(r)
+            
+            # Combine all text from this crop (filter empty)
+            crop_text = " ".join([r['text'] for r in crop_results if r['text'].strip()])
+            
+            # Store the extracted text for this field
+            extracted[label] = {
+                "text": crop_text,
+                "confidence": field.confidence,
+                "box": field.box,
+                "ocr_lang": ocr_langs
+            }
+            
+            # Add to overall text results
+            for r in crop_results:
+                r['field_label'] = label
+                text_results.append(r)
+        
+        # Extract unique ID from the unique_id field if detected
+        extracted_id = None
+        id_confidence = 0.0
+        
+        if "unique_id" in extracted:
+            id_text = extracted["unique_id"]["text"]
+            # Clean and extract ID number
+            cleaned = re.sub(r'[^0-9]', '', id_text)
+            if len(cleaned) >= 8:
+                extracted_id = cleaned
+                id_confidence = extracted["unique_id"]["confidence"]
+        
+        # Fallback: try to identify from all extracted texts
+        if not extracted_id:
+            extracted_id, id_type, id_confidence = self.identify_id_number(text_results)
+        else:
+            id_type = "yemen_id"
+        
+        return {
+            "extracted_id": extracted_id,
+            "id_type": id_type,
+            "confidence": id_confidence,
+            "text_results": text_results,
+            "detected_languages": ["en", "ar"],
+            "detected_languages_display": ["English 🇬🇧", "Arabic 🇾🇪"],
+            "extraction_method": "yolo",
+            "layout_fields": {
+                label: {
+                    **{k: v for k, v in data.items() if k not in ('ocr_results',)}
+                }
+                for label, data in extracted.items()
+            }
         }
 
 
@@ -369,3 +637,4 @@ def extract_id_from_path(image_path: str) -> Dict:
         raise ValueError(f"Could not read image: {image_path}")
     
     return extract_id_from_image(image)
+
