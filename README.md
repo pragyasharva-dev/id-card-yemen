@@ -139,3 +139,7 @@ Request → FastAPI Router → Services → Utils
 ## License
 
 MIT
+
+## For AI Agents
+
+See [CONTEXT.md](CONTEXT.md) for detailed architectural context, design patterns, and maintenance instructions.
