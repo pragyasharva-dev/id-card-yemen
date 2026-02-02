@@ -30,8 +30,8 @@ class AntiSpoofModel:
     _session: Optional["ort.InferenceSession"] = None
     _model_path: Optional[Path] = None
     
-    # Model input size (typical for MobileNet-based models)
-    INPUT_SIZE = (80, 80)  # Width, Height
+    # Model input size (matches MiniFASNetV2SE model)
+    INPUT_SIZE = (128, 128)  # Width, Height
     
     def __new__(cls):
         """Singleton pattern."""
@@ -144,19 +144,26 @@ class AntiSpoofModel:
             # Run inference
             outputs = AntiSpoofModel._session.run(None, {input_name: input_tensor})
             
-            # Parse output (assuming binary classifier with softmax output)
+            # Parse output - MiniFASNetV2SE outputs raw logits [real, spoof]
             if len(outputs) > 0:
                 output = outputs[0]
                 
                 if output.shape[-1] == 2:
-                    # Two-class output: [real_prob, spoof_prob]
-                    spoof_prob = float(output[0][1])
+                    # Two-class output: [real_logit, spoof_logit]
+                    # Apply softmax to convert to probabilities
+                    logits = output[0]
+                    exp_logits = np.exp(logits - np.max(logits))  # Numerical stability
+                    softmax = exp_logits / np.sum(exp_logits)
+                    spoof_prob = float(softmax[1])  # Index 1 = spoof probability
                 elif output.shape[-1] == 1:
-                    # Single output: spoof probability
-                    spoof_prob = float(output[0][0])
-                else:
-                    # Assume sigmoid output
+                    # Single output: apply sigmoid
                     spoof_prob = float(1.0 / (1.0 + np.exp(-output[0][0])))
+                else:
+                    # Unknown output format
+                    spoof_prob = 0.5
+                
+                # Clamp values to valid range
+                spoof_prob = max(0.0, min(1.0, spoof_prob))
                 
                 result["spoof_probability"] = round(spoof_prob, 4)
                 result["is_real"] = spoof_prob < 0.5

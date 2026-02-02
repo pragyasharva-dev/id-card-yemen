@@ -4,12 +4,11 @@
 
 This document describes the passive liveness detection system integrated into the eKYC verification flow. The system analyzes selfie images to detect spoof attacks (photos, screens, prints) and ensure the user is a live, physically present person.
 
-**Version 2 Optimizations:**
-- Fast LBP using skimage (vectorized, 10x faster)
-- Color analysis applied to face ROI only
-- Sharpness normalized by image size (device-independent)
-- FFT with Hann window (noise reduction)
-- Weighted voting instead of equal voting
+**Current Implementation:**
+- Strict mode: ALL checks must pass
+- Normalized scores: 0-1 range for all checks
+- ML Model: MiniFASNetV2SE ONNX model
+- Configurable thresholds via `config.py`
 
 ---
 
@@ -24,25 +23,20 @@ This document describes the passive liveness detection system integrated into th
 ┌─────────────────────────────────────────────────────────────┐
 │                  LIVENESS SERVICE                           │
 │   ┌─────────────────────────────────────────────────────┐   │
-│   │  1. Image Size Check                                │   │
-│   │  2. Texture Analysis (LBP)                          │   │
-│   │  3. Color Analysis (HSV)                            │   │
-│   │  4. Sharpness Check (Laplacian)                     │   │
-│   │  5. Moiré Detection (FFT)                           │   │
-│   │  6. ML Model (Enhanced Fallback)                    │   │
+│   │  1. Image Size Check (min 160px)                    │   │
+│   │  2. Texture Analysis (LBP variance)                 │   │
+│   │  3. Color Analysis (skin tone ratio)                │   │
+│   │  4. Sharpness Check (Laplacian variance)            │   │
+│   │  5. Moiré Pattern Detection (FFT)                   │   │
+│   │  6. ML Model (MiniFASNetV2SE)                       │   │
 │   └─────────────────────────────────────────────────────┘   │
 └─────────────────────────────────────────────────────────────┘
                             │
                             ▼
 ┌─────────────────────────────────────────────────────────────┐
-│               SAME-SOURCE CHECK                             │
-│   Similarity > 95% → HARD FAIL (ID card crop detected)      │
-└─────────────────────────────────────────────────────────────┘
-                            │
-                            ▼
-┌─────────────────────────────────────────────────────────────┐
-│                  FINAL DECISION                             │
-│   Confidence ≥ 60% → PASS | Otherwise → WARNING             │
+│                  STRICT MODE DECISION                       │
+│          ALL 6 checks must pass → LIVE                      │
+│          ANY check fails → SPOOF                            │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -50,98 +44,76 @@ This document describes the passive liveness detection system integrated into th
 
 ## Detection Techniques
 
-### 1. Sharpness Analysis (Laplacian Variance)
-- **Purpose:** Detect blurry images typical of printed photos or screen captures
-- **Method:** Calculate Laplacian variance of grayscale image
-- **Threshold:** > 100.0
-- **Spoof Indicator:** Low sharpness → likely spoof
+### 1. Image Size Check
+- **Purpose:** Ensure image quality is sufficient for analysis
+- **Method:** Check minimum dimension
+- **Threshold:** > 20% (160px of 800px max)
+- **Score:** `min(dimension, 800) / 800`
 
-### 2. Texture Analysis (Local Binary Patterns)
-- **Purpose:** Detect flat or artificial surfaces lacking skin micro-texture
-- **Method:** LBP variance calculation
-- **Threshold:** > 50.0
-- **Spoof Indicator:** Low texture score → printed or replay attack
+### 2. Texture Analysis (LBP)
+- **Purpose:** Detect flat surfaces lacking skin micro-texture
+- **Method:** Local Binary Pattern variance
+- **Threshold:** > 8%
+- **Score:** `min(lbp_variance, 20) / 20`
+- **Spoof Indicator:** Low score = printed/screen attack
 
-### 3. Color Distribution (HSV Analysis)
-- **Purpose:** Detect limited color range typical of screens/prints
-- **Method:** Analyze skin tone ratio in HSV color space
-- **Threshold:** > 0.3 (30% skin tone)
-- **Spoof Indicator:** Low saturation variance → spoof
+### 3. Color Distribution
+- **Purpose:** Detect limited color range of screens/prints
+- **Method:** Skin tone ratio in HSV color space
+- **Threshold:** > 35%
+- **Score:** Already 0-1 (skin ratio)
+- **Spoof Indicator:** Low skin ratio = artificial image
 
-### 4. Moiré Pattern Detection (FFT)
-- **Purpose:** Detect interference patterns from screen captures
-- **Method:** FFT frequency analysis on mid-frequency bands
-- **Threshold:** > 0.15
-- **Spoof Indicator:** High moiré energy → screen replay
+### 4. Sharpness Analysis
+- **Purpose:** Detect blurry images from prints/captures
+- **Method:** Laplacian variance
+- **Threshold:** > 2%
+- **Score:** `min(laplacian_var, 100) / 100`
+- **Spoof Indicator:** Low sharpness = print/screen
 
-### 5. ML-Based Anti-Spoofing
-- **Purpose:** Combined analysis using multiple image features
-- **Method:** Enhanced fallback with 4 sub-techniques:
-  - Laplacian sharpness
-  - High-frequency content (FFT)
-  - Edge density (Canny)
-  - Color saturation variance
-- **Threshold:** spoof_probability < 0.5
+### 5. Moiré Pattern Detection
+- **Purpose:** Detect interference patterns from screens
+- **Method:** FFT frequency analysis
+- **Threshold:** > 20%
+- **Score:** Already 0-1 (moiré energy)
+- **Spoof Indicator:** High moiré = screen replay
 
-### 6. Same-Source Detection
-- **Purpose:** Detect if selfie is cropped from ID card
-- **Method:** Face embedding similarity comparison
-- **Threshold:** 95%
-- **Effect:** **HARD FAIL** - Overrides all other checks
+### 6. ML-Based Anti-Spoofing
+- **Purpose:** Deep learning spoof detection
+- **Model:** MiniFASNetV2SE (ONNX, 128x128 input)
+- **Threshold:** > 70%
+- **Score:** `1.0 - spoof_probability`
+- **Location:** `models/antispoof/best_model_quantized.onnx`
 
 ---
 
-## Configuration Parameters
+## Configuration
 
-```json
-{
-  "liveness_detection": {
-    "enabled": true,
-    "overall_threshold": 0.6,
-    "checks": {
-      "image_size": {
-        "min_dimension": 100,
-        "unit": "pixels"
-      },
-      "texture": {
-        "threshold": 50.0,
-        "method": "LBP_variance"
-      },
-      "color": {
-        "threshold": 0.3,
-        "method": "skin_tone_ratio"
-      },
-      "sharpness": {
-        "threshold": 100.0,
-        "method": "laplacian_variance"
-      },
-      "moire": {
-        "threshold": 0.15,
-        "method": "FFT_analysis"
-      },
-      "ml_model": {
-        "threshold": 0.5,
-        "method": "enhanced_fallback"
-      }
-    },
-    "same_source": {
-      "threshold": 0.95,
-      "effect": "hard_fail"
-    }
-  }
-}
+All thresholds are in `utils/config.py`:
+
+```python
+# Liveness Detection Settings (STRICT MODE)
+# All thresholds are normalized to 0-1 range
+LIVENESS_ENABLED = True
+LIVENESS_TEXTURE_THRESHOLD = 0.08   # 8%
+LIVENESS_COLOR_THRESHOLD = 0.35    # 35%
+LIVENESS_SHARPNESS_THRESHOLD = 0.02 # 2%
+LIVENESS_MOIRE_THRESHOLD = 0.20    # 20%
+LIVENESS_ML_THRESHOLD = 0.70       # 70%
+LIVENESS_SIZE_THRESHOLD = 0.20     # 20%
 ```
 
 ---
 
 ## Decision Logic
 
-1. **Run all 6 checks** on the selfie image
-2. **Calculate confidence:** `passed_checks / total_checks`
-3. **Apply same-source override:** If face similarity > 95%, force FAIL
-4. **Final decision:**
-   - Confidence ≥ 60% → **PASS**
-   - Confidence < 60% → **WARNING**
+```
+1. Run all 6 checks on selfie image
+2. Each check returns: passed (bool), score (0-1), threshold (0-1)
+3. STRICT MODE: ALL checks must pass
+4. If ANY check fails → is_live = false
+5. Confidence = passed_count / total_checks
+```
 
 ---
 
@@ -149,20 +121,46 @@ This document describes the passive liveness detection system integrated into th
 
 ```json
 {
-  "liveness": {
-    "is_live": true,
-    "confidence": 0.833,
-    "spoof_probability": 0.167,
-    "checks": {
-      "image_size": {"passed": true, "score": 640, "threshold": 100},
-      "texture": {"passed": true, "score": 1250.5, "threshold": 50.0},
-      "color": {"passed": true, "score": 0.45, "threshold": 0.3},
-      "sharpness": {"passed": true, "score": 850.2, "threshold": 100.0},
-      "reflection": {"passed": false, "score": 0.12, "threshold": 0.15},
-      "ml_model": {"passed": true, "score": 0.72, "threshold": 0.5}
+  "is_live": true,
+  "confidence": 1.0,
+  "spoof_probability": 0.0,
+  "checks": {
+    "image_size": {
+      "passed": true,
+      "score": 0.84,
+      "threshold": 0.2,
+      "raw_score": 672
     },
-    "error": null
-  }
+    "texture": {
+      "passed": true,
+      "score": 0.42,
+      "threshold": 0.08,
+      "raw_score": 8.4
+    },
+    "color": {
+      "passed": true,
+      "score": 1.0,
+      "threshold": 0.35
+    },
+    "sharpness": {
+      "passed": true,
+      "score": 0.72,
+      "threshold": 0.02,
+      "raw_score": 72.1
+    },
+    "moire_pattern": {
+      "passed": true,
+      "score": 0.32,
+      "threshold": 0.2
+    },
+    "ml_model": {
+      "passed": true,
+      "score": 0.94,
+      "threshold": 0.7,
+      "model": "best_model_quantized.onnx"
+    }
+  },
+  "error": null
 }
 ```
 
@@ -172,24 +170,33 @@ This document describes the passive liveness detection system integrated into th
 
 | File | Purpose |
 |------|---------|
-| `services/liveness_service.py` | Core liveness detection logic |
-| `services/antispoof_model.py` | ML-based anti-spoofing model |
-| `services/face_recognition.py` | Same-source detection |
-| `utils/config.py` | Configuration parameters |
-| `models/schemas.py` | API response schemas |
+| `services/liveness_service.py` | Core detection logic (6 checks) |
+| `services/antispoof_model.py` | ML model wrapper (MiniFASNetV2SE) |
+| `utils/config.py` | All thresholds and settings |
+| `models/antispoof/best_model_quantized.onnx` | ONNX model file |
 
 ---
 
-## Non-Blocking Behavior
+## Limitations
 
-The liveness detection is **non-blocking**:
-- Verification continues even if liveness fails
-- Results are returned as warnings
-- Frontend displays liveness status with confidence
-- Business logic can decide how to handle warnings
+This passive liveness system **can detect:**
+- Low-quality printed photos
+- Blurry/compressed images
+- Screen displays with moiré patterns
+- Obvious spoof attempts
+
+This system **cannot reliably detect:**
+- High-quality printed photos
+- HD screens without moiré
+- 3D masks
+- Deepfakes/AI-generated faces
+- Video replays
+
+For higher security, consider active liveness (blink/smile detection) with video input.
 
 ---
 
 ## Version
 - **Implementation Date:** January 2026
-- **Last Updated:** January 23, 2026
+- **Last Updated:** February 2, 2026
+- **ML Model:** MiniFASNetV2SE (ONNX, quantized)

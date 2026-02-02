@@ -29,7 +29,9 @@ from utils.config import (
     LIVENESS_TEXTURE_THRESHOLD,
     LIVENESS_COLOR_THRESHOLD,
     LIVENESS_SHARPNESS_THRESHOLD,
-    LIVENESS_MOIRE_THRESHOLD
+    LIVENESS_MOIRE_THRESHOLD,
+    LIVENESS_ML_THRESHOLD,
+    LIVENESS_SIZE_THRESHOLD
 )
 
 
@@ -358,64 +360,84 @@ def detect_spoof(image: np.ndarray) -> Dict:
         
         h, w = gray.shape[:2]
         
-        # 0. Image Size Check (soft check for non-camera sources)
-        MIN_SIZE = 100  # Minimum dimension in pixels
-        size_passed = bool(h >= MIN_SIZE and w >= MIN_SIZE)
+        # Helper function to normalize scores to 0-1
+        def normalize_score(value: float, threshold: float, max_value: float) -> float:
+            """Normalize a score to 0-1 range. Returns 1.0 at max_value, threshold maps to ~0.5."""
+            if value <= 0:
+                return 0.0
+            if value >= max_value:
+                return 1.0
+            # Scale so threshold maps to approximately 0.5
+            return min(1.0, value / (threshold * 2))
+        
+        # 0. Image Size Check - Normalized to 0-1
+        MAX_SIZE = 800  # Reference for "excellent" size
+        raw_size = float(min(h, w))
+        normalized_size = min(1.0, raw_size / MAX_SIZE)
+        size_passed = bool(normalized_size > LIVENESS_SIZE_THRESHOLD)
         checks["image_size"] = {
             "passed": size_passed,
-            "score": float(min(h, w)),
-            "threshold": float(MIN_SIZE)
+            "score": round(normalized_size, 3),
+            "threshold": float(LIVENESS_SIZE_THRESHOLD),
+            "raw_score": raw_size
         }
         
-        # 1. Texture Analysis (LBP) - Fast skimage version
-        texture_score = compute_lbp_texture_score(gray)
-        texture_passed = bool(texture_score > LIVENESS_TEXTURE_THRESHOLD)
+        # 1. Texture Analysis (LBP) - Normalized to 0-1
+        MAX_TEXTURE = 20.0  # Reference for excellent texture
+        raw_texture = compute_lbp_texture_score(gray)
+        normalized_texture = min(1.0, raw_texture / MAX_TEXTURE)
+        texture_passed = bool(normalized_texture > LIVENESS_TEXTURE_THRESHOLD)
         checks["texture"] = {
             "passed": texture_passed,
-            "score": float(round(texture_score, 2)),
-            "threshold": float(LIVENESS_TEXTURE_THRESHOLD)
+            "score": round(normalized_texture, 3),
+            "threshold": float(LIVENESS_TEXTURE_THRESHOLD),
+            "raw_score": round(raw_texture, 2)
         }
         
-        # 2. Color Distribution (Face ROI only)
+        # 2. Color Distribution - Already 0-1
         color_score = analyze_color_distribution(image, face_roi)
         color_passed = bool(color_score > LIVENESS_COLOR_THRESHOLD)
         checks["color"] = {
             "passed": color_passed,
-            "score": float(round(color_score, 3)),
+            "score": round(color_score, 3),
             "threshold": float(LIVENESS_COLOR_THRESHOLD)
         }
         
-        # 3. Sharpness Analysis (Normalized)
-        sharpness_score = check_image_sharpness(gray, normalize=True)
-        sharpness_passed = bool(sharpness_score > LIVENESS_SHARPNESS_THRESHOLD)
+        # 3. Sharpness Analysis - Normalized to 0-1
+        MAX_SHARPNESS = 100.0  # Reference for excellent sharpness
+        raw_sharpness = check_image_sharpness(gray, normalize=True)
+        normalized_sharpness = min(1.0, raw_sharpness / MAX_SHARPNESS)
+        sharpness_passed = bool(normalized_sharpness > LIVENESS_SHARPNESS_THRESHOLD)
         checks["sharpness"] = {
             "passed": sharpness_passed,
-            "score": float(round(sharpness_score, 2)),
-            "threshold": float(LIVENESS_SHARPNESS_THRESHOLD)
+            "score": round(normalized_sharpness, 3),
+            "threshold": float(LIVENESS_SHARPNESS_THRESHOLD),
+            "raw_score": round(raw_sharpness, 2)
         }
         
-        # 4. Moiré Pattern Detection (with Hann window)
+        # 4. Moiré Pattern Detection - Already 0-1
         moire_score = detect_moire_patterns(gray)
         moire_passed = bool(moire_score > LIVENESS_MOIRE_THRESHOLD)
-        checks["reflection"] = {
+        checks["moire_pattern"] = {
             "passed": moire_passed,
-            "score": float(round(moire_score, 3)),
+            "score": round(moire_score, 3),
             "threshold": float(LIVENESS_MOIRE_THRESHOLD)
         }
         
-        # 5. ML-based Anti-Spoofing Model (if available)
+        # 5. ML-based Anti-Spoofing Model
         try:
             from .antispoof_model import predict_spoof as ml_predict
             ml_result = ml_predict(image)
             
             # Only add to checks if model actually ran
             if ml_result.get("model_used") not in ["none", "error"]:
-                ml_passed = ml_result.get("is_real", False)
                 ml_spoof_prob = ml_result.get("spoof_probability", 0.5)
+                ml_score = 1.0 - ml_spoof_prob  # Convert to "real" score
+                ml_passed = ml_score > LIVENESS_ML_THRESHOLD
                 checks["ml_model"] = {
                     "passed": bool(ml_passed),
-                    "score": float(round(1.0 - ml_spoof_prob, 3)),
-                    "threshold": 0.5,
+                    "score": round(ml_score, 3),
+                    "threshold": float(LIVENESS_ML_THRESHOLD),
                     "model": ml_result.get("model_used", "unknown")
                 }
         except ImportError:
@@ -425,7 +447,7 @@ def detect_spoof(image: np.ndarray) -> Dict:
             checks["ml_model"] = {
                 "passed": True,
                 "score": 0.5,
-                "threshold": 0.5,
+                "threshold": float(LIVENESS_ML_THRESHOLD),
                 "error": str(e)
             }
         
@@ -440,7 +462,7 @@ def detect_spoof(image: np.ndarray) -> Dict:
             ("texture", texture_passed),
             ("color", color_passed),
             ("sharpness", sharpness_passed),
-            ("reflection", moire_passed),
+            ("moire_pattern", moire_passed),
         ]
         
         # Check if ML model check exists and passed
