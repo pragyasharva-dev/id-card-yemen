@@ -15,6 +15,7 @@ import cv2
 from pathlib import Path
 from typing import Optional
 from fastapi import APIRouter, HTTPException, UploadFile, File, Form
+from fastapi.concurrency import run_in_threadpool
 
 from models.schemas import (
     VerifyRequest, VerifyResponse,
@@ -102,17 +103,17 @@ async def verify_identity_endpoint(
             id_card_back_image = load_image(id_card_back_bytes)
         
         # Extract ID and all OCR data from front card
-        front_ocr_result = extract_id_from_image(id_card_front_image)
+        front_ocr_result = await run_in_threadpool(extract_id_from_image, id_card_front_image)
         extracted_id = front_ocr_result.get("extracted_id")
         id_type = front_ocr_result.get("id_type")
         
         # Extract OCR from back card if provided
         back_ocr_result = None
         if id_card_back_image is not None:
-            back_ocr_result = extract_id_from_image(id_card_back_image)
+            back_ocr_result = await run_in_threadpool(extract_id_from_image, id_card_back_image)
         
         # Parse structured data from FRONT and BACK OCR results separately
-        parsed_data = parse_yemen_id_card(front_ocr_result, back_ocr_result)
+        parsed_data = await run_in_threadpool(parse_yemen_id_card, front_ocr_result, back_ocr_result)
         
         # Save images with proper naming if ID was extracted
         if extracted_id:
@@ -129,7 +130,7 @@ async def verify_identity_endpoint(
                 save_image(id_card_back_image, id_back_filename, PROCESSED_DIR)
         
         # Face verification using front card
-        face_result = verify_identity(id_card_front_image, selfie_image)
+        face_result = await run_in_threadpool(verify_identity, id_card_front_image, selfie_image)
         
         if face_result.get("error"):
             return VerifyResponse(
@@ -204,7 +205,7 @@ async def verify_identity_json(request: VerifyRequest):
             raise ValueError("Either selfie_path or selfie_base64 is required")
         
         # Search for ID card in database
-        search_result = search_id_card_by_number(request.id_number)
+        search_result = await run_in_threadpool(search_id_card_by_number, request.id_number)
         
         if search_result is None:
             return VerifyResponse(
@@ -229,7 +230,7 @@ async def verify_identity_json(request: VerifyRequest):
         id_type = ocr_result.get("id_type")
         
         # Face verification
-        face_result = verify_identity(id_card_image, selfie_image)
+        face_result = await run_in_threadpool(verify_identity, id_card_image, selfie_image)
         
         if face_result.get("error"):
             return VerifyResponse(
@@ -298,7 +299,7 @@ async def extract_id_endpoint(
         image_bytes = await image.read()
         id_card_image = load_image(image_bytes)
         
-        result = extract_id_from_image(id_card_image)
+        result = await run_in_threadpool(extract_id_from_image, id_card_image)
         
         return ExtractIDResponse(
             success=True,
@@ -339,10 +340,10 @@ async def parse_id_endpoint(
         id_card_image = load_image(image_bytes)
         
         # Get OCR result
-        ocr_result = extract_id_from_image(id_card_image)
+        ocr_result = await run_in_threadpool(extract_id_from_image, id_card_image)
         
         # Parse into structured data
-        parsed_data = parse_yemen_id_card(ocr_result, None)
+        parsed_data = await run_in_threadpool(parse_yemen_id_card, ocr_result, None)
         
         return {
             "success": True,
@@ -382,7 +383,7 @@ async def compare_faces_endpoint(
         img1 = load_image(image1_bytes)
         img2 = load_image(image2_bytes)
         
-        result = compare_faces(img1, img2)
+        result = await run_in_threadpool(compare_faces, img1, img2)
         
         if result.get("error"):
             return CompareFacesResponse(
@@ -444,7 +445,7 @@ async def process_batch_endpoint(request: BatchProcessRequest):
                     failed += 1
                     continue
                 
-                ocr_result = extract_id_from_image(image)
+                ocr_result = await run_in_threadpool(extract_id_from_image, image)
                 extracted_id = ocr_result.get("extracted_id")
                 
                 if extracted_id:
@@ -502,7 +503,7 @@ async def translate_texts_endpoint(request: TranslateRequest):
             )
         
         # Translate all texts
-        results = translate_arabic_to_english(request.texts)
+        results = await run_in_threadpool(translate_arabic_to_english, request.texts)
         
         translations = [
             TranslatedText(
@@ -549,10 +550,11 @@ async def compare_form_ocr_endpoint(request: FormOCRComparisonRequest):
         from services.field_comparison_service import validate_form_vs_ocr
         
         # Perform comparison
-        result = validate_form_vs_ocr(
-            manual_data=request.manual_data,
-            ocr_data=request.ocr_data,
-            ocr_confidence=request.ocr_confidence
+        result = await run_in_threadpool(
+            validate_form_vs_ocr,
+            request.manual_data,
+            request.ocr_data,
+            request.ocr_confidence
         )
         
         # Convert to response model
@@ -771,7 +773,7 @@ async def validate_id_endpoint(
         # ============================================
         # STEP 2: OCR Extraction - FRONT
         # ============================================
-        front_ocr = extract_id_from_image(front_image)
+        front_ocr = await run_in_threadpool(extract_id_from_image, front_image)
         
         if not front_ocr or not front_ocr.get("extracted_id"):
             response["errors"].append("OCR extraction failed on front image - no ID detected")
@@ -791,7 +793,7 @@ async def validate_id_endpoint(
         # OCR Extraction - BACK (if provided)
         back_ocr = None
         if back_image is not None:
-            back_ocr = extract_id_from_image(back_image)
+            back_ocr = await run_in_threadpool(extract_id_from_image, back_image)
             if back_ocr:
                 response["steps"].append({
                     "step": 2.5, 
@@ -845,7 +847,7 @@ async def validate_id_endpoint(
         # ============================================
         # STEP 4: Full Field Extraction (Parse ID - Front + Back)
         # ============================================
-        parsed_data = parse_yemen_id_card(front_ocr, back_ocr)
+        parsed_data = await run_in_threadpool(parse_yemen_id_card, front_ocr, back_ocr)
         
         if not parsed_data:
             response["errors"].append("Failed to parse ID card fields")
@@ -887,10 +889,11 @@ async def validate_id_endpoint(
             "issuing_authority": issuing_authority
         }
         
-        comparison_result = validate_form_vs_ocr(
-            manual_data=manual_data,
-            ocr_data=response["ocr_extracted_data"],
-            ocr_confidence=front_ocr.get("confidence", 0.9)
+        comparison_result = await run_in_threadpool(
+            validate_form_vs_ocr,
+            manual_data,
+            response["ocr_extracted_data"],
+            front_ocr.get("confidence", 0.9)
         )
         
         response["comparison_results"] = {
