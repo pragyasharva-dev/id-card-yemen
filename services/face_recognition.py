@@ -145,9 +145,7 @@ def verify_identity(
         try:
             from .liveness_service import detect_spoof, is_liveness_enabled
             if is_liveness_enabled():
-                # Pass image_source for source-based gating
-                # Default to 'selfie_upload' for API uploads
-                liveness_result = detect_spoof(selfie_image, image_source="selfie_upload")
+                liveness_result = detect_spoof(selfie_image)
         except ImportError:
             # Liveness service not available, continue without it
             pass

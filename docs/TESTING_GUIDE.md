@@ -327,6 +327,19 @@ curl -X POST http://localhost:8000/translate \
   -d '{"texts": ["أحمد محمد", "صنعاء"]}'
 ```
 
+### Test Quality Checks
+**Check ID Quality:**
+```bash
+curl -X POST http://localhost:8000/check-id-quality \
+  -F "id_card=@data/id_cards/front.jpg"
+```
+
+**Check Selfie Quality:**
+```bash
+curl -X POST http://localhost:8000/check-selfie-quality \
+  -F "selfie=@data/selfies/person.jpg"
+```
+
 ---
 
 ## 🎯 Next Steps
