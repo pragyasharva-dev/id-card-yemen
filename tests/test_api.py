@@ -2,10 +2,10 @@
 Test script for e-KYC API verification.
 
 Usage:
-    python test_api.py <id_card_path> <selfie_path>
+    python tests/test_api.py <id_card_path> <selfie_path>
 
 Example:
-    python test_api.py data/id_cards/sample.jpg data/selfies/sample.jpg
+    python tests/test_api.py data/id_cards/sample.jpg data/selfies/sample.jpg
 """
 import sys
 import requests
@@ -111,7 +111,7 @@ if __name__ == "__main__":
         test_extract_id(id_card_path)
     else:
         print("\nUsage:")
-        print("  python test_api.py <id_card_path> <selfie_path>  # Full verification")
-        print("  python test_api.py <id_card_path>                 # ID extraction only")
+        print("  python tests/test_api.py <id_card_path> <selfie_path>  # Full verification")
+        print("  python tests/test_api.py <id_card_path>                 # ID extraction only")
         print("\nExample:")
-        print("  python test_api.py data/id_cards/sample.jpg data/selfies/sample.jpg")
+        print("  python tests/test_api.py data/id_cards/sample.jpg data/selfies/sample.jpg")

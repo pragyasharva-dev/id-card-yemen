@@ -37,6 +37,12 @@ ID_PATTERNS = {
         "length": 11,
         "type": "numeric"
     },
+    "yemen_passport": {
+        "pattern": r"^\d{8}$",
+        "description": "8-digit numeric Yemen Passport",
+        "length": 8,
+        "type": "numeric"
+    },
     # "passport": {
     #     "pattern": r"^[A-Z][0-9]{7}$",
     #     "description": "Indian passport format (A1234567)",
@@ -86,3 +92,145 @@ FACE_QUALITY_MIN_CONFIDENCE = 0.5  # Minimum face detection confidence
 FACE_QUALITY_MIN_FACE_RATIO = 0.02  # Minimum face area ratio in image (2%)
 
 
+# Place of Birth Settings
+# Low-severity field - Non-blocking validation
+PLACE_OF_BIRTH_ENABLED = True
+PLACE_OF_BIRTH_PASS_THRESHOLD = 0.70  # Default threshold for passing
+PLACE_OF_BIRTH_MANUAL_THRESHOLD = 0.40  # Below this → manual review
+
+# ========================================
+# Passport & MRZ Configuration
+# ========================================
+
+# MRZ (Machine Readable Zone) Settings
+PASSPORT_MRZ_ENABLED = True
+PASSPORT_MRZ_MIN_CONFIDENCE = 0.90  # Minimum confidence for MRZ validity
+MRZ_LINE_LENGTH = 44  # ICAO 9303 TD-3 standard
+MRZ_EXPECTED_LINES = 2  # 2-line format for passports
+MRZ_VALID_CHARACTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789<"
+
+# Passport Patterns
+PASSPORT_PATTERNS = {
+    "passport_number": r"^[A-Z]{1,2}[0-9]{6,9}$"  # Yemen passport format
+}
+# NOTE: No reject threshold - this field NEVER causes auto-rejection
+
+# Name Matching Settings
+# High-severity field - Low scores may cause rejection
+NAME_MATCHING_ENABLED = True
+NAME_MATCHING_PASS_THRESHOLD = 0.90  # Score >= 0.90 → pass
+NAME_MATCHING_MANUAL_THRESHOLD = 0.70  # Score < 0.70 → may reject
+# NOTE: High severity - scores below manual_threshold may cause rejection
+
+# ========================================
+# Field Comparison Configuration
+# Per SOW: Configurable severity levels and thresholds
+# ========================================
+
+FIELD_COMPARISON_ENABLED = True
+
+# Date comparison tolerance (days)
+DATE_TOLERANCE_DAYS = 1  # Allow ±1 day for OCR errors
+
+# ========================================
+# Severity-Based Field Configuration
+# ========================================
+
+# Severity-Based Field Configuration
+# ========================================
+
+FIELD_CONFIGURATIONS = {
+    # HIGH SEVERITY - Mismatches may cause REJECTION
+    "id_number": {
+        "severity": "high",
+        "enabled": True,
+        "pass_threshold": 1.0,
+        "manual_threshold": 1.0,
+        "matching_type": "exact",
+        "description": "Yemen National ID number"
+    },
+    "passport_number": {
+        "severity": "high",
+        "enabled": True,
+        "pass_threshold": 1.0,
+        "manual_threshold": 1.0,
+        "matching_type": "exact",
+        "description": "Yemen Passport number"
+    },
+    "date_of_birth": {
+        "severity": "high",
+        "enabled": True,  
+        "pass_threshold": 1.0,
+        "manual_threshold": 1.0,
+        "matching_type": "exact",
+        "description": "Date of birth"
+    },
+    "name_arabic": {
+        "severity": "high",
+        "enabled": True,
+        "pass_threshold": 0.90,
+        "manual_threshold": 0.70,
+        "matching_type": "fuzzy",
+        "description": "Full name in Arabic"
+    },
+    "name_english": {
+        "severity": "high",
+        "enabled": True,
+        "pass_threshold": 0.90,
+        "manual_threshold": 0.70,
+        "matching_type": "fuzzy",
+        "description": "Full name in English"
+    },
+    "gender": {
+        "severity": "high",
+        "enabled": True,
+        "pass_threshold": 1.0,
+        "manual_threshold": 1.0,
+        "matching_type": "exact",
+        "description": "Gender (with 4th digit validation for National ID)"
+    },
+    
+    # MEDIUM SEVERITY - Mismatches → MANUAL REVIEW
+    "issuance_date": {
+        "severity": "medium",
+        "enabled": True,
+        "pass_threshold": 1.0,
+        "manual_threshold": 0.0,
+        "matching_type": "exact",
+        "description": "ID issuance date"
+    },
+    "expiry_date": {
+        "severity": "medium",
+        "enabled": True,
+        "pass_threshold": 1.0,
+        "manual_threshold": 0.0,
+        "matching_type": "exact",
+        "description": "ID expiry date"
+    },
+    
+    # LOW SEVERITY - Never rejects
+    "place_of_birth": {
+        "severity": "low",
+        "enabled": True,
+        "pass_threshold": 0.70,
+        "manual_threshold": 0.40,
+        "matching_type": "token",
+        "description": "Place of birth"
+    }
+}
+
+# ========================================
+# Severity-Based Scoring Weights
+# ========================================
+# Configurable weights for weighted average calculation
+# Used for reporting and analytics - NOT for decision thresholds
+# Sum of all weights should = 1.0
+
+SEVERITY_WEIGHTS = {
+    "high": 0.50,     # High-severity fields get 50% weight
+    "medium": 0.30,   # Medium-severity fields get 30% weight
+    "low": 0.20       # Low-severity fields get 20% weight
+}
+
+# NOTE: Decisions are made purely based on field-level pass/review/reject statuses
+# Weighted score is calculated for informational/reporting purposes only

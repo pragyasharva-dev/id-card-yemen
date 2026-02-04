@@ -55,6 +55,20 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"Failed to preload face recognition model: {e}")
     
+    # Pre-load YOLO layout detection models
+    try:
+        from services.layout_service import get_layout_service, is_layout_available
+        logger.info("Loading YOLO layout detection models...")
+        layout_service = get_layout_service()
+        if is_layout_available("yemen_id_front"):
+            logger.info("YOLO front model loaded successfully")
+        if is_layout_available("yemen_id_back"):
+            logger.info("YOLO back model loaded successfully")
+        if not layout_service.models:
+            logger.warning("No YOLO models found - layout detection disabled")
+    except Exception as e:
+        logger.warning(f"Failed to preload YOLO models: {e}")
+    
     logger.info("e-KYC API ready!")
     
     yield  # Application runs here
@@ -97,7 +111,9 @@ app.add_middleware(
 
 # Include API routes
 from api.routes import router
+from api.test_routes import test_router
 app.include_router(router, tags=["e-KYC"])
+app.include_router(test_router, tags=["Testing"])
 
 # Serve static files
 static_dir = Path(__file__).parent / "static"

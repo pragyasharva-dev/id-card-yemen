@@ -1,8 +1,17 @@
 """
 Pydantic models for API request/response schemas.
 """
-from typing import Optional, List
+from typing import Optional, List, Literal, Dict, Any
 from pydantic import BaseModel, Field
+
+# Import form validators for ID card data entry
+from models.form_validators import (
+    YemenNationalIDForm,
+    YemenPassportForm,
+    IDFormSubmitRequest,
+    IDFormSubmitResponse,
+    IDFormValidationError
+)
 
 
 class VerifyRequest(BaseModel):
@@ -424,4 +433,166 @@ class ExportResponse(BaseModel):
     file_name: Optional[str] = None
     record_count: int = 0
     error: Optional[str] = None
+# Place of Birth Validation Schemas
+class PlaceOfBirthNormalized(BaseModel):
+    """Normalized place of birth components."""
+    district: Optional[str] = Field(None, description="Identified district")
+    governorate: Optional[str] = Field(None, description="Identified governorate")
+
+
+class PlaceOfBirthData(BaseModel):
+    """
+    Place of Birth validation result.
+    
+    Low-severity field - NEVER causes auto-rejection.
+    At most, marks for manual review.
+    """
+    ocr_raw: Optional[str] = Field(None, description="Raw OCR extracted text")
+    user_input: Optional[str] = Field(None, description="User-provided place of birth")
+    normalized: Optional[PlaceOfBirthNormalized] = Field(
+        None,
+        description="Normalized governorate and district components"
+    )
+    ocr_confidence: float = Field(0.0, description="OCR confidence score (0-1)")
+    matching_score: float = Field(
+        0.0,
+        description="Token matching score (0-1), weighted by governorate/district"
+    )
+    decision: Literal["pass", "manual_review"] = Field(
+        "manual_review",
+        description="Validation decision - NEVER 'reject'"
+    )
+    reason: Optional[str] = Field(None, description="Explanation for the decision")
+
+
+# Name Matching Schemas
+class NameComparison(BaseModel):
+    """Result of comparing a single name (Arabic or English)."""
+    ocr_normalized: str = Field(..., description="Normalized OCR name")
+    user_normalized: str = Field(..., description="Normalized user name")
+    exact_match: bool = Field(..., description="Whether names match exactly after normalization")
+    similarity_score: float = Field(..., description="String similarity score (0-1)")
+    token_overlap: float = Field(..., description="Token overlap score (0-1)")
+    final_score: float = Field(..., description="Weighted final score")
+
+
+class NameMatchingResult(BaseModel):
+    """
+    Name matching validation result.
+    
+    High-severity field - Low scores may cause rejection.
+    """
+    arabic_comparison: Optional[NameComparison] = Field(
+        None,
+        description="Arabic name comparison results"
+    )
+    english_comparison: Optional[NameComparison] = Field(
+        None,
+        description="English name comparison results"
+    )
+    combined_score: float = Field(
+        0.0,
+        description="Combined score from both languages"
+    )
+    final_score: float = Field(
+        0.0,
+        description="Final score after OCR confidence multiplier"
+    )
+    decision: Literal["pass", "manual_review", "reject"] = Field(
+        "manual_review",
+        description="Validation decision - MAY reject on low scores (high severity)"
+    )
+    reason: str = Field(..., description="Explanation for the decision")
+
+
+# Field Comparison Data Models
+class FieldComparisonResult(BaseModel):
+    """Result of comparing a single field between OCR and manual input."""
+    field_name: str = Field(..., description="Name of the field")
+    severity: Literal["high", "medium", "low"] = Field(..., description="Field severity level")
+    matching_type: str = Field(..., description="Matching type (exact/fuzzy/token)")
+    match: bool = Field(..., description="Whether values match")
+    score: float = Field(..., description="Matching score (0-1)")
+    ocr_value: Optional[str] = Field(None, description="OCR value")
+    user_value: Optional[str] = Field(None, description="User value")
+    decision: Literal["pass", "manual_review", "reject"] = Field(..., description="Decision")
+    reason: str = Field(..., description="Explanation")
+    fraud_detected: Optional[bool] = Field(None, description="Fraud detection flag")
+    fraud_reason: Optional[str] = Field(None, description="Fraud reason if detected")
+    days_diff: Optional[int] = Field(None, description="Days difference for dates")
+
+
+class FormOCRComparisonSummary(BaseModel):
+    """Summary statistics."""
+    total_fields: int
+    passed_fields: int
+    review_fields: int
+    failed_fields: int
+
+
+class FormOCRComparisonRequest(BaseModel):
+    """Request to compare manual vs OCR data."""
+    manual_data: Dict[str, Any] = Field(..., description="Manual form data")
+    ocr_data: Dict[str, Any] = Field(..., description="OCR extracted data")
+    ocr_confidence: float = Field(1.0, ge=0.0, le=1.0, description="OCR confidence")
+
+
+class FormOCRComparisonResponse(BaseModel):
+    """Response with comparison results."""
+    overall_decision: Literal["approved", "manual_review", "rejected"]
+    overall_score: float = Field(..., ge=0.0, le=1.0)
+    field_comparisons: List[FieldComparisonResult]
+    summary: FormOCRComparisonSummary
+    recommendations: List[str]
+
+
+# Selfie Verification Test Schemas
+class SelfieVerificationResponse(BaseModel):
+    """
+    Response model for the /test-selfie-verification endpoint.
+    
+    Provides detailed face matching results for testing selfie verification
+    in isolation without the full e-KYC pipeline.
+    """
+    success: bool = Field(
+        ...,
+        description="Whether the verification process completed successfully"
+    )
+    similarity_score: Optional[float] = Field(
+        None,
+        description="Face similarity score between 0.0 and 1.0"
+    )
+    threshold: float = Field(
+        0.5,
+        description="Threshold used for pass/fail decision"
+    )
+    decision: Literal["PASS", "FAIL", "ERROR"] = Field(
+        ...,
+        description="Verification decision based on threshold"
+    )
+    reference_face_detected: bool = Field(
+        False,
+        description="Whether a face was detected in the reference image"
+    )
+    selfie_face_detected: bool = Field(
+        False,
+        description="Whether a face was detected in the selfie image"
+    )
+    error: Optional[str] = Field(
+        None,
+        description="Error message if verification failed"
+    )
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "success": True,
+                "similarity_score": 0.87,
+                "threshold": 0.5,
+                "decision": "PASS",
+                "reference_face_detected": True,
+                "selfie_face_detected": True,
+                "error": None
+            }
+        }
 
