@@ -388,7 +388,108 @@ async def verify_identity_endpoint(
             error=str(e)
         )
 
+ sujata
 
+@router.post("/verify-json", response_model=VerifyResponse)
+async def verify_identity_json(request: VerifyRequest):
+    """
+    e-KYC verification using JSON body with ID number and selfie path/base64.
+    
+    Searches ID cards database for matching ID, then compares faces.
+    """
+    try:
+        from services.id_database import search_id_card_by_number
+        
+        # Load selfie image
+        if request.selfie_path:
+            selfie_image = load_image(request.selfie_path)
+        elif request.selfie_base64:
+            selfie_image = load_image(request.selfie_base64)
+        else:
+            raise ValueError("Either selfie_path or selfie_base64 is required")
+        
+        # Search for ID card in database
+        search_result = search_id_card_by_number(request.id_number)
+        
+        if search_result is None:
+            return VerifyResponse(
+                success=False,
+                extracted_id=request.id_number,
+                id_type=None,
+                similarity_score=None,
+                id_front=None,
+                id_back=None,
+                name_arabic=None,
+                name_english=None,
+                date_of_birth=None,
+                gender=None,
+                place_of_birth=None,
+                issuance_date=None,
+                expiry_date=None,
+                error=f"ID card with number '{request.id_number}' not found in database"
+            )
+        
+        card_path, id_card_image, ocr_result = search_result
+        extracted_id = ocr_result.get("extracted_id")
+        id_type = ocr_result.get("id_type")
+        
+        # Face verification
+        face_result = verify_identity(id_card_image, selfie_image)
+        
+        if face_result.get("error"):
+            return VerifyResponse(
+                success=False,
+                extracted_id=extracted_id,
+                id_type=id_type,
+                similarity_score=None,
+                id_front=None,
+                id_back=None,
+                name_arabic=None,
+                name_english=None,
+                date_of_birth=None,
+                gender=None,
+                place_of_birth=None,
+                issuance_date=None,
+                expiry_date=None,
+                error=face_result["error"]
+            )
+        
+        return VerifyResponse(
+            success=True,
+            extracted_id=extracted_id,
+            id_type=id_type,
+            similarity_score=face_result["similarity_score"],
+            id_front=None,
+            id_back=None,
+            name_arabic=None,
+            name_english=None,
+            date_of_birth=None,
+            gender=None,
+            place_of_birth=None,
+            issuance_date=None,
+            expiry_date=None,
+            error=None
+        )
+        
+    except Exception as e:
+        return VerifyResponse(
+            success=False,
+            extracted_id=None,
+            id_type=None,
+            similarity_score=None,
+            id_front=None,
+            id_back=None,
+            name_arabic=None,
+            name_english=None,
+            date_of_birth=None,
+            gender=None,
+            place_of_birth=None,
+            issuance_date=None,
+            expiry_date=None,
+            error=str(e)
+        )
+
+main
 
 @router.post("/extract-id", response_model=ExtractIDResponse)
 async def extract_id_endpoint(
