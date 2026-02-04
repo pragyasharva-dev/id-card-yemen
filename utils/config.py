@@ -91,6 +91,41 @@ FACE_QUALITY_MIN_LANDMARKS = 3  # Minimum visible landmarks (eyes, nose, mouth)
 FACE_QUALITY_MIN_CONFIDENCE = 0.5  # Minimum face detection confidence
 FACE_QUALITY_MIN_FACE_RATIO = 0.02  # Minimum face area ratio in image (2%)
 
+# Document Validation (Yemen ID and Passport services)
+DOC_VALIDATION_ENABLED = True
+DOC_MIN_SHARPNESS = 0.04  # Laplacian variance (normalized), reject blurry/soft copies
+DOC_MIN_OCR_CONFIDENCE = 0.55  # Min OCR confidence (real docs with glare/MRZ softness may be lower)
+DOC_MIN_RESOLUTION_PX = 320  # Minimum side length in pixels
+DOC_MIN_MARGIN_RATIO = 0.005  # Min margin (0.5%); allow card to fill frame in live capture
+DOC_MIN_COVERAGE_RATIO = 0.5  # Document must occupy ≥ 50% of image
+DOC_ASPECT_RATIO_YEMEN_ID = (1.3, 1.8)  # (min, max) width/height for Yemen ID front
+DOC_ASPECT_RATIO_YEMEN_ID_BACK = (1.0, 2.0)  # Wider for back (QR/text layout, different framing)
+DOC_ASPECT_RATIO_PASSPORT = (0.6, 1.7)  # (min, max) width/height - allow portrait or landscape
+DOC_MOIRE_THRESHOLD = 0.30  # Above this = less moiré (good); allow originals ~0.31; screen photos often lower
+DOC_MOIRE_THRESHOLD_BACK = 0.25  # More lenient for ID back (barcode/QR can cause subtle moiré on originals)
+DOC_MOIRE_THRESHOLD_PASSPORT = 0.33  # Above this = less moiré (good); originals ~0.34; screen captures often lower; combined with screen_grid for borderline
+DOC_SCREEN_GRID_MAX = 0.55  # FFT grid score above this = photo of screen; scoring tuned so originals stay below
+DOC_SCREEN_GRID_MAX_BACK = 0.65  # More lenient for ID back (dense barcode can add periodic structure)
+DOC_SCREEN_GRID_MAX_PASSPORT = 0.53  # Stricter than ID (0.55); originals with security print ~0.51; screen captures often 0.40-0.50
+# Passport: reject borderline moiré + medium screen_grid (screen-capture pattern); originals have higher screen_grid
+DOC_PASSPORT_MOIRE_BORDERLINE_MIN = 0.33
+DOC_PASSPORT_MOIRE_BORDERLINE_MAX = 0.36
+DOC_PASSPORT_SCREEN_GRID_SUSPICIOUS_MIN = 0.38
+DOC_PASSPORT_SCREEN_GRID_SUSPICIOUS_MAX = 0.50
+DOC_MIN_SHARPNESS_PASSPORT = 0.08  # Stricter for passport: reject soft color copies (originals usually sharper)
+DOC_HALFTONE_MAX_PASSPORT = 0.28  # Stricter for passport: reject printed copies (halftone dots)
+DOC_TEXTURE_THRESHOLD = 0.08  # LBP variance, photocopies tend lower
+DOC_TEXTURE_MAX = 1.0  # Cap at 1.0; originals with security printing/holograms can score 1.0
+DOC_HALFTONE_MAX = 0.35  # FFT halftone score above this = suspected print/copy, reject
+# When texture is high (>= this), require mean saturation >= DOC_MIN_SATURATION_FOR_HIGH_TEXTURE
+DOC_HIGH_TEXTURE_THRESHOLD = 0.92
+DOC_MIN_SATURATION_FOR_HIGH_TEXTURE = 0.06  # Reject only very flat prints; originals can be muted (lighting/passport design)
+
+# Document obstruction (finger, paper, sticker, etc.)
+DOC_GLARE_MAX_RATIO = 0.15  # Max fraction of document region that may be overexposed/saturated (glare)
+DOC_OBSTRUCTION_SKIN_RATIO_MAX = 0.22  # Max fraction of document pixels that may be skin-colored (finger/hand)
+DOC_OBSTRUCTION_FLAT_CELL_RATIO_MAX = 0.25  # Max fraction of document grid cells allowed with very low variance (sticker/tape/paper)
+DOC_OBSTRUCTION_FLAT_VARIANCE_THRESHOLD = 80  # Cell variance below this = flat (possible sticker/tape/paper)
 
 # Place of Birth Settings
 # Low-severity field - Non-blocking validation

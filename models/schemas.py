@@ -596,3 +596,31 @@ class SelfieVerificationResponse(BaseModel):
             }
         }
 
+
+# =====================================================
+# DOCUMENT VALIDATION (Yemen ID & Passport)
+# =====================================================
+
+class DocumentCheckResult(BaseModel):
+    """Result of a single document validation check."""
+    passed: bool = Field(..., description="Whether the check passed")
+    score: Optional[float] = Field(None, description="Numeric score if applicable")
+    threshold: Optional[float] = Field(None, description="Threshold used")
+    detail: Optional[str] = Field(None, description="Short reason or detail")
+
+
+class DocumentValidationResult(BaseModel):
+    """Full result from Yemen ID or Passport document validation."""
+    passed: bool = Field(..., description="Overall validation passed")
+    document_type: str = Field(..., description="yemen_id or passport")
+    checks: dict = Field(
+        default_factory=dict,
+        description="Per-check results: official_document, not_screenshot_or_copy, "
+                    "clear_and_readable, fully_visible, not_obscured, no_extra_objects, integrity"
+    )
+    checks_back: Optional[dict] = Field(
+        None,
+        description="Yemen ID only: per-check results for back image (not_screenshot_or_copy, sharpness, fully_visible, no_extra_objects)"
+    )
+    error: Optional[str] = Field(None, description="Error message if validation failed")
+
