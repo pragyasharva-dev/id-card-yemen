@@ -108,3 +108,8 @@ data/selfies/*.png
 # Webhook files (optional feature, not core)
 services/webhook_service.py
 config/webhook_config.py
+*.rar
+*.zip
+
+# models
+*.pt

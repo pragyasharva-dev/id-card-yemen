@@ -62,6 +62,17 @@ id-card-yemen/
    uv sync
    ```
 
+   **Note for Windows Users:**
+   The `insightface` library requires C++ build tools. Please install [Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) and select "Desktop development with C++" workload before installing dependencies.
+
+3. Verify Model Weights:
+   Ensure the following YOLOv8 model weights are present in the `models/` directory before running the application:
+   - `north-yemen-front.pt`
+   - `north-yemen-back.pt`
+   - `yemen-passport.pt`
+   
+   If missing, please download them from the project repository or request them from the team.
+
 ## Usage
 
 ### Start the API Server
@@ -139,3 +150,7 @@ Request → FastAPI Router → Services → Utils
 ## License
 
 MIT
+
+## For AI Agents
+
+See [CONTEXT.md](CONTEXT.md) for detailed architectural context, design patterns, and maintenance instructions.

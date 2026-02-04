@@ -10,11 +10,11 @@ Tests the new features:
 - Image filename storage
 
 Usage:
-    python test_verify_enhanced.py <id_card_front> <selfie> [id_card_back]
+    python tests/test_verify_enhanced.py <id_card_front> <selfie> [id_card_back]
 
 Example:
-    python test_verify_enhanced.py data/id_cards/front.jpg data/selfies/selfie.jpg
-    python test_verify_enhanced.py data/id_cards/front.jpg data/selfies/selfie.jpg data/id_cards/back.jpg
+    python tests/test_verify_enhanced.py data/id_cards/front.jpg data/selfies/selfie.jpg
+    python tests/test_verify_enhanced.py data/id_cards/front.jpg data/selfies/selfie.jpg data/id_cards/back.jpg
 """
 import sys
 import json
@@ -199,12 +199,12 @@ def main():
         print("\n📖 Usage Instructions:")
         print("-" * 60)
         print("\n  With front ID only:")
-        print("    python test_verify_enhanced.py <id_front> <selfie>")
+        print("    python tests/test_verify_enhanced.py <id_front> <selfie>")
         print("\n  With front and back ID:")
-        print("    python test_verify_enhanced.py <id_front> <selfie> <id_back>")
+        print("    python tests/test_verify_enhanced.py <id_front> <selfie> <id_back>")
         print("\n  Examples:")
-        print("    python test_verify_enhanced.py data/id_cards/front.jpg data/selfies/me.jpg")
-        print("    python test_verify_enhanced.py data/id_cards/front.jpg data/selfies/me.jpg data/id_cards/back.jpg")
+        print("    python tests/test_verify_enhanced.py data/id_cards/front.jpg data/selfies/me.jpg")
+        print("    python tests/test_verify_enhanced.py data/id_cards/front.jpg data/selfies/me.jpg data/id_cards/back.jpg")
         print("\n" + "=" * 60 + "\n")
 
 
