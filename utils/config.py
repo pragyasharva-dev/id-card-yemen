@@ -115,4 +115,9 @@ DOC_HALFTONE_MAX = 0.35  # FFT halftone score above this = suspected print/copy,
 DOC_HIGH_TEXTURE_THRESHOLD = 0.92
 DOC_MIN_SATURATION_FOR_HIGH_TEXTURE = 0.06  # Reject only very flat prints; originals can be muted (lighting/passport design)
 
+# Document obstruction (finger, paper, sticker, etc.)
+DOC_GLARE_MAX_RATIO = 0.15  # Max fraction of document region that may be overexposed/saturated (glare)
+DOC_OBSTRUCTION_SKIN_RATIO_MAX = 0.22  # Max fraction of document pixels that may be skin-colored (finger/hand)
+DOC_OBSTRUCTION_FLAT_CELL_RATIO_MAX = 0.25  # Max fraction of document grid cells allowed with very low variance (sticker/tape/paper)
+DOC_OBSTRUCTION_FLAT_VARIANCE_THRESHOLD = 80  # Cell variance below this = flat (possible sticker/tape/paper)
 

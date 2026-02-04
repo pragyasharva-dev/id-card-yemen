@@ -34,6 +34,7 @@ from services.document_validation_helpers import (
     check_not_screenshot_or_copy,
     get_document_boundary,
     check_glare,
+    check_document_obstruction,
 )
 
 
@@ -102,17 +103,39 @@ def _check_fully_visible_yemen_id(
     return out
 
 
-def _check_not_obscured_yemen_id(image: np.ndarray, face_detected: bool, ocr_result: Optional[Dict]) -> Dict[str, Any]:
-    """Not covered/obscured: face visible + glare check."""
-    no_glare, glare_ratio = check_glare(image)
+def _check_not_obscured_yemen_id(
+    image: np.ndarray,
+    face_detected: bool,
+    ocr_result: Optional[Dict],
+    boundary: Optional[Dict] = None,
+) -> Dict[str, Any]:
+    """Not covered/obscured: face visible + glare (on document region) + obstruction (finger, sticker, etc.)."""
+    roi = boundary.get("bbox") if boundary else None
+    no_glare, glare_ratio = check_glare(image, roi=roi)
+    obstruction = check_document_obstruction(image, boundary)
     text_ok = bool(ocr_result and ocr_result.get("extracted_id"))
-    passed = face_detected and no_glare and text_ok
-    return {
+    passed = face_detected and no_glare and text_ok and obstruction["passed"]
+    detail = None
+    if not passed:
+        if not face_detected:
+            detail = "Face not visible"
+        elif not no_glare:
+            detail = "Glare or reflection on document"
+        elif not text_ok:
+            detail = "Text not readable"
+        elif not obstruction["passed"]:
+            detail = obstruction.get("detail") or "Document may be covered or obstructed"
+        else:
+            detail = "Document covered or obstructed"
+    out = {
         "passed": passed,
         "score": 1.0 if passed else 0.0,
-        "detail": None if passed else ("Face not visible" if not face_detected else "Glare or text not readable"),
+        "detail": detail,
         "glare_ratio": glare_ratio,
     }
+    if obstruction.get("sub_checks"):
+        out["sub_checks"] = obstruction["sub_checks"]
+    return out
 
 
 def _check_no_extra_objects_yemen_id(
@@ -254,7 +277,9 @@ def validate_yemen_id(
     full_vis = _check_fully_visible_yemen_id(front_image)
     result["checks"]["fully_visible"] = {k: v for k, v in full_vis.items()}
     boundary = get_document_boundary(front_image, DOC_ASPECT_RATIO_YEMEN_ID)
-    result["checks"]["not_obscured"] = _check_not_obscured_yemen_id(front_image, face_detected, ocr_result)
+    result["checks"]["not_obscured"] = _check_not_obscured_yemen_id(
+        front_image, face_detected, ocr_result, boundary=boundary
+    )
     result["checks"]["no_extra_objects"] = _check_no_extra_objects_yemen_id(front_image, boundary)
     result["checks"]["integrity"] = _check_integrity_yemen_id(front_image, face_detected)
 

@@ -26,6 +26,7 @@ from services.document_validation_helpers import (
     check_not_screenshot_or_copy,
     get_document_boundary,
     check_glare,
+    check_document_obstruction,
 )
 
 
@@ -128,17 +129,39 @@ def _check_fully_visible_passport(image: np.ndarray) -> Dict[str, Any]:
     }
 
 
-def _check_not_obscured_passport(image: np.ndarray, face_detected: bool, ocr_result: Optional[Dict]) -> Dict[str, Any]:
-    """Not covered/obscured: face visible + glare check."""
-    no_glare, glare_ratio = check_glare(image)
+def _check_not_obscured_passport(
+    image: np.ndarray,
+    face_detected: bool,
+    ocr_result: Optional[Dict],
+    boundary: Optional[Dict] = None,
+) -> Dict[str, Any]:
+    """Not covered/obscured: face visible + glare (on document region) + obstruction (finger, sticker, etc.)."""
+    roi = boundary.get("bbox") if boundary else None
+    no_glare, glare_ratio = check_glare(image, roi=roi)
+    obstruction = check_document_obstruction(image, boundary)
     text_ok = _has_passport_content(ocr_result)
-    passed = face_detected and no_glare and text_ok
-    return {
+    passed = face_detected and no_glare and text_ok and obstruction["passed"]
+    detail = None
+    if not passed:
+        if not face_detected:
+            detail = "Face not visible"
+        elif not no_glare:
+            detail = "Glare or reflection on document"
+        elif not text_ok:
+            detail = "Text not readable"
+        elif not obstruction["passed"]:
+            detail = obstruction.get("detail") or "Document may be covered or obstructed"
+        else:
+            detail = "Document covered or obstructed"
+    out = {
         "passed": passed,
         "score": 1.0 if passed else 0.0,
-        "detail": None if passed else ("Face not visible" if not face_detected else "Glare or text not readable"),
+        "detail": detail,
         "glare_ratio": glare_ratio,
     }
+    if obstruction.get("sub_checks"):
+        out["sub_checks"] = obstruction["sub_checks"]
+    return out
 
 
 def _check_no_extra_objects_passport(image: np.ndarray, boundary: Optional[Dict]) -> Dict[str, Any]:
@@ -244,7 +267,9 @@ def validate_passport(image: np.ndarray) -> Dict[str, Any]:
     boundary = full_vis.get("boundary")
 
     # 5. Not obscured
-    result["checks"]["not_obscured"] = _check_not_obscured_passport(image, face_detected, ocr_result)
+    result["checks"]["not_obscured"] = _check_not_obscured_passport(
+        image, face_detected, ocr_result, boundary=boundary
+    )
 
     # 6. No extra objects
     result["checks"]["no_extra_objects"] = _check_no_extra_objects_passport(image, boundary)
