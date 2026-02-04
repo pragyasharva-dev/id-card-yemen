@@ -74,6 +74,24 @@ FACE_DETECTION_CTX = 0  # GPU context, -1 for CPU
 SUPPORTED_IMAGE_FORMATS = [".png", ".jpg", ".jpeg", ".bmp", ".tiff"]
 MAX_IMAGE_SIZE = (2000, 2000)  # Maximum dimensions for processing
 
+# Liveness Detection Settings (Passive Anti-Spoofing - STRICT MODE)
+# All thresholds are normalized to 0-1 range (percentage / 100)
+LIVENESS_ENABLED = True  # Enable/disable liveness checks
+LIVENESS_TEXTURE_THRESHOLD = 0.08  # 8% - Texture variance
+LIVENESS_COLOR_THRESHOLD = 0.35  # 35% - Skin tone detection
+LIVENESS_SHARPNESS_THRESHOLD = 0.02  # 2% - Image sharpness
+LIVENESS_MOIRE_THRESHOLD = 0.20  # 20% - Moiré/reflection detection
+LIVENESS_ML_THRESHOLD = 0.70  # 70% - ML model confidence
+LIVENESS_SIZE_THRESHOLD = 0.20  # 20% - Minimum image size
+LIVENESS_THRESHOLD = 0.5  # Overall liveness confidence threshold (0-1)
+
+# Face Quality Check Settings (for ID card and selfie validation)
+FACE_QUALITY_ENABLED = True  # Enable/disable face quality checks
+FACE_QUALITY_MIN_LANDMARKS = 3  # Minimum visible landmarks (eyes, nose, mouth)
+FACE_QUALITY_MIN_CONFIDENCE = 0.5  # Minimum face detection confidence
+FACE_QUALITY_MIN_FACE_RATIO = 0.02  # Minimum face area ratio in image (2%)
+
+
 # Place of Birth Settings
 # Low-severity field - Non-blocking validation
 PLACE_OF_BIRTH_ENABLED = True

@@ -94,6 +94,37 @@ class FaceMatchResult(BaseModel):
     )
 
 
+class LivenessCheckResult(BaseModel):
+    """Result of an individual liveness check."""
+    passed: bool = Field(..., description="Whether this check passed")
+    score: float = Field(..., description="Raw score for this check")
+    threshold: float = Field(..., description="Threshold used for comparison")
+
+
+class LivenessResult(BaseModel):
+    """Complete liveness detection result."""
+    is_live: bool = Field(
+        ..., 
+        description="Whether the image appears to be from a live person"
+    )
+    confidence: float = Field(
+        ..., 
+        description="Overall liveness confidence (0.0-1.0)"
+    )
+    spoof_probability: float = Field(
+        ..., 
+        description="Probability that this is a spoof attempt (0.0-1.0)"
+    )
+    checks: dict = Field(
+        default_factory=dict,
+        description="Individual check results (texture, color, sharpness, reflection)"
+    )
+    error: Optional[str] = Field(
+        None,
+        description="Error message if liveness detection failed"
+    )
+
+
 class VerifyResponse(BaseModel):
     """Response model for the /verify endpoint."""
     success: bool = Field(
@@ -148,6 +179,10 @@ class VerifyResponse(BaseModel):
     expiry_date: Optional[str] = Field(
         None,
         description="ID card expiry date in YYYY-MM-DD format"
+    )
+    liveness: Optional[LivenessResult] = Field(
+        None,
+        description="Liveness detection result for the selfie (warning only, non-blocking)"
     )
     error: Optional[str] = Field(
         None, 
@@ -226,11 +261,22 @@ class BatchProcessResponse(BaseModel):
     errors: List[str] = Field(default_factory=list)
 
 
+class ImageQualityResponse(BaseModel):
+    """Response for image quality check endpoints (/check-id-quality, /check-selfie-quality)."""
+    passed: bool = Field(..., description="Whether the image quality check passed")
+    face_detected: bool = Field(..., description="Whether a face was detected in the image")
+    quality_score: float = Field(..., description="Quality score (0.0-1.0)")
+    error: Optional[str] = Field(None, description="Error message if check failed")
+    details: Optional[dict] = Field(None, description="Detailed quality check breakdown")
+
+
 class HealthResponse(BaseModel):
     """Health check response."""
     status: str = "ok"
     ocr_ready: bool = False
     face_recognition_ready: bool = False
+    liveness_enabled: bool = False
+    face_quality_enabled: bool = False
 
 
 # Translation schemas
@@ -258,6 +304,135 @@ class TranslateResponse(BaseModel):
     error: Optional[str] = Field(None, description="Error message if translation failed")
 
 
+# =====================================================
+# DATABASE SCHEMAS - ID Card and Passport Storage
+# =====================================================
+
+class SaveIDCardRequest(BaseModel):
+    """Request model for saving ID card data to database."""
+    national_id: str = Field(..., description="11-digit Yemen National ID number")
+    name_arabic: Optional[str] = Field(None, description="Full name in Arabic")
+    name_english: Optional[str] = Field(None, description="Full name in English")
+    # Or individual name components
+    first_name_arabic: Optional[str] = Field(None, description="First name in Arabic")
+    middle_name_arabic: Optional[str] = Field(None, description="Middle name in Arabic")
+    last_name_arabic: Optional[str] = Field(None, description="Last name in Arabic")
+    first_name_english: Optional[str] = Field(None, description="First name in English")
+    middle_name_english: Optional[str] = Field(None, description="Middle name in English")
+    last_name_english: Optional[str] = Field(None, description="Last name in English")
+    date_of_birth: Optional[str] = Field(None, description="Date of birth (YYYY-MM-DD)")
+    gender: Optional[str] = Field(None, description="Male/Female")
+    nationality: Optional[str] = Field("Yemeni", description="Nationality")
+    address: Optional[str] = Field(None, description="Full address")
+    governorate: Optional[str] = Field(None, description="Governorate/Province")
+    issuance_date: Optional[str] = Field(None, description="Card issuance date")
+    expiry_date: Optional[str] = Field(None, description="Card expiry date")
+    front_image_path: Optional[str] = Field(None, description="Path to front image")
+    back_image_path: Optional[str] = Field(None, description="Path to back image")
+
+
+class SavePassportRequest(BaseModel):
+    """Request model for saving passport data to database."""
+    passport_number: str = Field(..., description="Passport number")
+    name_arabic: Optional[str] = Field(None, description="Full name in Arabic")
+    name_english: Optional[str] = Field(None, description="Full name in English")
+    # Or individual name components
+    first_name_arabic: Optional[str] = Field(None, description="First name in Arabic")
+    middle_name_arabic: Optional[str] = Field(None, description="Middle name in Arabic")
+    last_name_arabic: Optional[str] = Field(None, description="Last name in Arabic")
+    first_name_english: Optional[str] = Field(None, description="First name in English")
+    middle_name_english: Optional[str] = Field(None, description="Middle name in English")
+    last_name_english: Optional[str] = Field(None, description="Last name in English")
+    date_of_birth: Optional[str] = Field(None, description="Date of birth (YYYY-MM-DD)")
+    place_of_birth: Optional[str] = Field(None, description="Place of birth")
+    gender: Optional[str] = Field(None, description="Male/Female")
+    nationality: Optional[str] = Field("Yemeni", description="Nationality")
+    passport_type: Optional[str] = Field("Ordinary", description="Passport type")
+    issuance_date: Optional[str] = Field(None, description="Passport issuance date")
+    expiry_date: Optional[str] = Field(None, description="Passport expiry date")
+    issuing_authority: Optional[str] = Field(None, description="Issuing authority")
+    mrz_line_1: Optional[str] = Field(None, description="MRZ line 1")
+    mrz_line_2: Optional[str] = Field(None, description="MRZ line 2")
+    image_path: Optional[str] = Field(None, description="Path to passport image")
+
+
+class IDCardRecord(BaseModel):
+    """Schema for an ID card database record."""
+    id: int
+    national_id: str
+    first_name_arabic: Optional[str] = None
+    middle_name_arabic: Optional[str] = None
+    last_name_arabic: Optional[str] = None
+    first_name_english: Optional[str] = None
+    middle_name_english: Optional[str] = None
+    last_name_english: Optional[str] = None
+    date_of_birth: Optional[str] = None
+    gender: Optional[str] = None
+    nationality: Optional[str] = None
+    address: Optional[str] = None
+    governorate: Optional[str] = None
+    issuance_date: Optional[str] = None
+    expiry_date: Optional[str] = None
+    front_image_path: Optional[str] = None
+    back_image_path: Optional[str] = None
+    created_at: Optional[str] = None
+
+
+class PassportRecord(BaseModel):
+    """Schema for a passport database record."""
+    id: int
+    passport_number: str
+    first_name_arabic: Optional[str] = None
+    middle_name_arabic: Optional[str] = None
+    last_name_arabic: Optional[str] = None
+    first_name_english: Optional[str] = None
+    middle_name_english: Optional[str] = None
+    last_name_english: Optional[str] = None
+    date_of_birth: Optional[str] = None
+    place_of_birth: Optional[str] = None
+    gender: Optional[str] = None
+    nationality: Optional[str] = None
+    passport_type: Optional[str] = None
+    issuance_date: Optional[str] = None
+    expiry_date: Optional[str] = None
+    issuing_authority: Optional[str] = None
+    mrz_line_1: Optional[str] = None
+    mrz_line_2: Optional[str] = None
+    image_path: Optional[str] = None
+    created_at: Optional[str] = None
+
+
+class IDCardListResponse(BaseModel):
+    """Response for listing ID card records."""
+    success: bool = True
+    count: int = 0
+    records: List[IDCardRecord] = Field(default_factory=list)
+    error: Optional[str] = None
+
+
+class PassportListResponse(BaseModel):
+    """Response for listing passport records."""
+    success: bool = True
+    count: int = 0
+    records: List[PassportRecord] = Field(default_factory=list)
+    error: Optional[str] = None
+
+
+class SaveRecordResponse(BaseModel):
+    """Response for save operations."""
+    success: bool
+    record_id: Optional[int] = None
+    message: Optional[str] = None
+    error: Optional[str] = None
+
+
+class ExportResponse(BaseModel):
+    """Response for export operations."""
+    success: bool
+    file_path: Optional[str] = None
+    file_name: Optional[str] = None
+    record_count: int = 0
+    error: Optional[str] = None
 # Place of Birth Validation Schemas
 class PlaceOfBirthNormalized(BaseModel):
     """Normalized place of birth components."""

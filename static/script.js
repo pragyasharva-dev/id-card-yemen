@@ -474,7 +474,7 @@ function displayVerifyResults(data) {
     const match = score >= 0.6;
     const pct = (score * 100).toFixed(1);
 
-    verifyResults.innerHTML = `
+    let html = `
         <div class="result-item">
             <span class="result-label">Similarity Score</span>
             <span class="result-value large ${match ? 'success' : 'error'}">${pct}%</span>
@@ -484,6 +484,54 @@ function displayVerifyResults(data) {
             <span class="result-value large ${match ? 'success' : 'error'}">${match ? '✓ Match' : '✗ No Match'}</span>
         </div>
     `;
+
+    // Display liveness detection result if available
+    if (data.liveness) {
+        const liveness = data.liveness;
+        const isLive = liveness.is_live;
+        const livenessConfidence = (liveness.confidence * 100).toFixed(1);
+
+        html += `
+            <div class="liveness-result ${isLive ? 'passed' : 'failed'}">
+                <div class="liveness-header">
+                    <span class="liveness-status">${isLive ? '✅ Liveness: Passed' : '⚠️ Liveness: Warning'}</span>
+                    <span class="liveness-confidence">${livenessConfidence}% confidence</span>
+                </div>
+        `;
+
+        // Show individual checks if available
+        if (liveness.checks && Object.keys(liveness.checks).length > 0) {
+            html += '<div class="liveness-checks">';
+            for (const [checkName, checkResult] of Object.entries(liveness.checks)) {
+                const checkPassed = checkResult.passed;
+                html += `
+                    <span class="check-item ${checkPassed ? 'check-pass' : 'check-fail'}">
+                        ${checkPassed ? '✓' : '✗'} ${checkName.charAt(0).toUpperCase() + checkName.slice(1)}
+                    </span>
+                `;
+            }
+            html += '</div>';
+        }
+
+        // Show error if present
+        if (liveness.error) {
+            html += `<div class="liveness-error">${liveness.error}</div>`;
+        }
+
+        html += '</div>';
+
+        // Add warning message if liveness failed
+        if (!isLive) {
+            html += `
+                <div class="liveness-warning">
+                    <strong>⚠️ Possible Spoof Detected:</strong> The selfie may not be from a live person. 
+                    Please ensure you're taking a live photo, not using a screen or printed image.
+                </div>
+            `;
+        }
+    }
+
+    verifyResults.innerHTML = html;
 }
 
 function displayError(message, container) {
