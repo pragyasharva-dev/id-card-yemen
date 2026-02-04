@@ -857,34 +857,78 @@ async def verify_id_card_endpoint(
             return response
         
         # ============================================
-        # STEP 3: OCR Extraction
+        # STEP 3 & 4: OCR Extraction (Branch by ID type)
         # ============================================
-        front_ocr = await run_in_threadpool(extract_id_from_image, front_image)
-        back_ocr = await run_in_threadpool(extract_id_from_image, back_image)
         
-        if not front_ocr:
-            response["errors"].append("OCR extraction failed on front image")
-            return response
+        # Normalize id_type for comparison
+        id_type_normalized = (id_type or "").lower().replace("-", "_").replace(" ", "_")
+        is_passport = "passport" in id_type_normalized
         
-        detected_id_type = front_ocr.get("id_type", "unknown")
-        extracted_id = front_ocr.get("extracted_id")
+        if is_passport:
+            # ========== PASSPORT PIPELINE ==========
+            from services.passport_ocr_service import extract_passport_data
+            
+            # Passport uses single image (front = data page)
+            passport_result = await run_in_threadpool(extract_passport_data, front_image)
+            
+            if not passport_result.get("success"):
+                response["errors"].append(passport_result.get("error", "Passport extraction failed"))
+                return response
+            
+            detected_id_type = "yemen_passport"
+            extracted_id = passport_result.get("passport_number")
+            
+            # Map passport fields to standard response format
+            response["ocr_extracted_data"] = {
+                "id_number": passport_result.get("passport_number"),
+                "name_arabic": None,  # Construct from parts if available
+                "name_english": passport_result.get("name_english"),
+                "date_of_birth": passport_result.get("date_of_birth"),
+                "gender": passport_result.get("gender"),
+                "place_of_birth": passport_result.get("place_of_birth"),
+                "issuance_date": passport_result.get("issuance_date"),
+                "expiry_date": passport_result.get("expiry_date"),
+                "detected_id_type": detected_id_type,
+                # Passport-specific fields
+                "given_names": passport_result.get("given_names"),
+                "surname": passport_result.get("surname"),
+                "nationality": passport_result.get("nationality"),
+                "mrz_valid": passport_result.get("mrz_valid"),
+                "mrz_confidence": passport_result.get("mrz_confidence"),
+            }
+            
+            # Build Arabic name if parts available
+            given_ar = passport_result.get("given_name_arabic") or ""
+            surname_ar = passport_result.get("surname_arabic") or ""
+            if given_ar or surname_ar:
+                response["ocr_extracted_data"]["name_arabic"] = f"{given_ar} {surname_ar}".strip()
         
-        # ============================================
-        # STEP 4: Parse structured data from both sides
-        # ============================================
-        parsed_data = await run_in_threadpool(parse_yemen_id_card, front_ocr, back_ocr)
-        
-        response["ocr_extracted_data"] = {
-            "id_number": parsed_data.get("id_number"),
-            "name_arabic": parsed_data.get("name_arabic"),
-            "name_english": parsed_data.get("name_english"),
-            "date_of_birth": parsed_data.get("date_of_birth"),
-            "gender": parsed_data.get("gender"),
-            "place_of_birth": parsed_data.get("place_of_birth"),
-            "issuance_date": parsed_data.get("issuance_date"),
-            "expiry_date": parsed_data.get("expiry_date"),
-            "detected_id_type": detected_id_type
-        }
+        else:
+            # ========== NATIONAL ID PIPELINE ==========
+            front_ocr = await run_in_threadpool(extract_id_from_image, front_image)
+            back_ocr = await run_in_threadpool(extract_id_from_image, back_image)
+            
+            if not front_ocr:
+                response["errors"].append("OCR extraction failed on front image")
+                return response
+            
+            detected_id_type = front_ocr.get("id_type", "unknown")
+            extracted_id = front_ocr.get("extracted_id")
+            
+            # Parse structured data from both sides
+            parsed_data = await run_in_threadpool(parse_yemen_id_card, front_ocr, back_ocr)
+            
+            response["ocr_extracted_data"] = {
+                "id_number": parsed_data.get("id_number"),
+                "name_arabic": parsed_data.get("name_arabic"),
+                "name_english": parsed_data.get("name_english"),
+                "date_of_birth": parsed_data.get("date_of_birth"),
+                "gender": parsed_data.get("gender"),
+                "place_of_birth": parsed_data.get("place_of_birth"),
+                "issuance_date": parsed_data.get("issuance_date"),
+                "expiry_date": parsed_data.get("expiry_date"),
+                "detected_id_type": detected_id_type
+            }
         
         # ============================================
         # STEP 5: Compare form data with OCR data
@@ -896,11 +940,19 @@ async def verify_id_card_endpoint(
             "issuance_date": issue_date
         }
         
+        # Get confidence score based on pipeline used
+        if is_passport:
+            # Use MRZ confidence from passport result
+            confidence_score = passport_result.get("mrz_confidence", 0.9)
+        else:
+            # Use OCR confidence from national ID result
+            confidence_score = front_ocr.get("confidence", 0.9) if front_ocr else 0.9
+        
         comparison_result = await run_in_threadpool(
             validate_form_vs_ocr,
             manual_data,
             response["ocr_extracted_data"],
-            front_ocr.get("confidence", 0.9)
+            confidence_score
         )
         
         response["comparison_results"] = {
