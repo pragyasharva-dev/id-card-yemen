@@ -10,51 +10,70 @@
 **Goal**: Verify customer identity by comparing ID card images with selfies.
 **Core Features**:
 - **ID Extraction**: OCR (PaddleOCR) + Pattern Matching for Yemen/Indian IDs.
-- **Face Verification**: InsightFace (Buffalo_L) for face comparison.
+- **Face Verification**: InsightFace (Buffalo_L) for face comparison and liveness detection.
 - **Translation**: Hybrid Arabic-to-English name translation.
 - **Validation**: Configurable strictness (Low/Medium/High severity fields).
+- **Database**: SQLite storage for ID cards, passports, and verification records.
 
 ## 2. Architecture
 
 ```mermaid
 graph TD
-    User[User/Client] --> API[FastAPI Routes]
+    User[User/Client] --> API[FastAPI Router]
+    
+    subgraph Routes [API Routes]
+        API --> Health[Health]
+        API --> OCR_API[OCR]
+        API --> Verify[Verification]
+        API --> Quality[Quality & Liveness]
+        API --> DB_API[Database CRUD]
+    end
     
     subgraph Services
-        API --> OCR[OCR Service]
-        API --> Face[Face Recognition]
-        API --> Trans[Translation Service]
-        API --> Parser[ID Parser]
+        OCR_API --> OCR[OCR Service]
+        Verify --> Face[Face Recognition]
+        Verify --> ID_DB[ID Database Service]
+        Quality --> IQS[Image Quality Service]
+        Quality --> Liveness[Liveness Service]
+        OCR_API --> Parser[ID Parser]
+        OCR_API --> Trans[Translation Service]
+        DB_API --> DB[Database Service]
     end
     
     subgraph Core Logic
         OCR --> Paddle[PaddleOCR]
-        OCR --> Lang[Language Detection]
         Face --> Insight[InsightFace]
+        Liveness --> Spoof[Anti-Spoofing]
         Trans --> Hybrid[Hybrid Pipeline]
-        Parser --> Patterns[Regex Patterns]
+        DB --> SQLite[(SQLite DB)]
     end
     
-    subgraph Utilities
-        Utils[Config/Image Manager]
-    end
-    
-    Services --> Utils
+    Services --> Utils[Utilities]
 ```
 
 ## 3. Directory Structure
-- **`api/`**: FastAPI route handlers (`routes.py`).
+- **`api/`**: FastAPI application.
+    - **`routes/`**: Modular route handlers.
+        - `verification.py`: Core e-KYC verification endpoints.
+        - `ocr.py`: ID extraction and parsing.
+        - `quality.py`: Image quality and liveness checks.
+        - `database.py`: CRUD operations for ID/passport records.
+        - `health.py`, `face.py`, `translation.py`.
+    - `test_routes.py`: Endpoints for testing and debugging.
 - **`services/`**: Core business logic.
     - `ocr_service.py`: Text extraction & ID pattern matching.
     - `face_recognition.py`: Face detection & comparison.
+    - `id_database.py`: **NEW** - ID card retrieval logic for verification.
+    - `database.py`: SQLite database abstraction.
+    - `image_quality_service.py`: Face visibility validation.
+    - `liveness_service.py`: Passive anti-spoofing checks.
     - `translation_service.py`: Hybrid translation logic.
     - `id_card_parser.py`: Structured data parsing from OCR text.
 - **`models/`**: Pydantic schemas (`schemas.py`) and validators.
 - **`utils/`**: Shared utilities.
     - `config.py`: **CRITICAL** - contains severity thresholds and ID patterns.
-    - `name_dictionary.py`: Static mappings for translation.
-- **`tests/`**: Test scripts (e.g., `manual_test_translation.py`, `test_verify_enhanced.py`).
-- **`data/`**: Local storage for images (gitignored usually, but structure exists).
+    - `ocr_utils.py`: Preprocessing and text normalization.
+- **`data/`**: Local storage for images and SQLite databases.
 
 ## 4. Key Engineering Concepts
 
@@ -75,7 +94,13 @@ Fields have severity levels determining verification outcome:
 - **Medium** (Dates): Failure = **MANUAL_REVIEW**.
 - **Low** (Place of Birth): Failure = **MANUAL_REVIEW** (never rejects).
 
+### D. Modular API Design
+- Routes are split by domain in `api/routes/`.
+- `main.py` aggregates them via a single router.
+- **Verification Flow**: `/verify` endpoint performs OCR, parses data, runs face comparison (with optional liveness), and auto-saves results to the database.
+
 ## 5. Agent Guidelines
 - **Running Tests**: Check `docs/TESTING_GUIDE.md`. Preferred script: `python tests/test_verify_enhanced.py`.
 - **Config**: Do not hardcode thresholds. Use `utils.config`.
 - **New IDs**: Add patterns to `ID_PATTERNS` in `utils/config.py`.
+- **Imports**: When importing services, ensure the module exists (e.g., `services.id_database`).
