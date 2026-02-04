@@ -41,6 +41,7 @@ except ImportError:
     TESSERACT_AVAILABLE = False
 
 from utils.config import ID_PATTERNS, OCR_CONFIDENCE_THRESHOLD
+from utils.ocr_utils import add_ocr_padding, parse_paddleocr_result
 
 
 # Supported languages with their Unicode ranges for detection
@@ -173,16 +174,91 @@ class OCRService:
         return cls._instance
     
     def __init__(self):
-        """Initialize PaddleOCR models for all supported languages if not already done."""
+        """Initialize English OCR model on startup. Other languages loaded on-demand."""
         if not OCRService._ocr_models:
-            print("Loading OCR models for all languages...")
-            for lang_code in SUPPORTED_LANGUAGES.keys():
-                try:
-                    print(f"  Loading {lang_code}...")
-                    OCRService._ocr_models[lang_code] = PaddleOCR(lang=lang_code)
-                except Exception as e:
-                    print(f"  Warning: Could not load OCR model for {lang_code}: {e}")
-            print("All OCR models loaded.")
+            # Only load English model at startup (most common)
+            # Arabic and other languages loaded lazily when first requested
+            print("Loading OCR model (en)...")
+            try:
+                OCRService._ocr_models['en'] = PaddleOCR(
+                    lang='en',
+                    use_angle_cls=False,
+                    use_doc_orientation_classify=False,
+                    use_doc_unwarping=False
+                )
+                print("  English OCR model loaded.")
+            except Exception as e:
+                print(f"  Warning: Could not load English OCR model: {e}")
+    
+    def _load_model(self, lang_code: str) -> Optional[PaddleOCR]:
+        """
+        Lazily load an OCR model for a specific language.
+        
+        Args:
+            lang_code: Language code ('en', 'ar', etc.)
+            
+        Returns:
+            PaddleOCR instance or None if loading fails
+        """
+        if lang_code in OCRService._ocr_models:
+            return OCRService._ocr_models[lang_code]
+        
+        if lang_code not in SUPPORTED_LANGUAGES:
+            print(f"  Warning: Unsupported language: {lang_code}")
+            return None
+        
+        print(f"  Loading OCR model ({lang_code}) on-demand...")
+        try:
+            OCRService._ocr_models[lang_code] = PaddleOCR(
+                lang=lang_code,
+                use_angle_cls=False,
+                use_doc_orientation_classify=False,
+                use_doc_unwarping=False
+            )
+            print(f"  {SUPPORTED_LANGUAGES[lang_code]['name']} OCR model loaded.")
+            return OCRService._ocr_models[lang_code]
+        except Exception as e:
+            print(f"  Warning: Could not load OCR model for {lang_code}: {e}")
+            return None
+    
+    def get_model(self, lang: str = 'en') -> Optional[PaddleOCR]:
+        """
+        Get the raw PaddleOCR model for a specific language.
+        Lazily loads the model if not already loaded.
+        
+        Use this when you need to pass the OCR engine to utility functions.
+        
+        Args:
+            lang: Language code ('en' or 'ar')
+            
+        Returns:
+            PaddleOCR instance or None if not available
+        """
+        # Use lazy loading
+        return self._load_model(lang)
+    
+    def ocr(self, image: np.ndarray, cls: bool = False, lang: str = 'en'):
+        """
+        Run OCR on an image using the specified language model.
+        Lazily loads the model if not already loaded.
+        
+        This is a convenience method that wraps the underlying PaddleOCR.
+        
+        Args:
+            image: Image to OCR (BGR format)
+            cls: Whether to use text direction classification (ignored in newer PaddleOCR)
+            lang: Language model to use ('en' or 'ar')
+            
+        Returns:
+            PaddleOCR result
+        """
+        # Use lazy loading
+        model = self._load_model(lang)
+        if model is None:
+            return None
+        # Note: Newer PaddleOCR versions don't accept 'cls' at prediction time
+        # cls should be set during initialization via use_angle_cls parameter
+        return model.ocr(image)
     
     def preprocess_image(self, image: np.ndarray) -> np.ndarray:
         """
@@ -209,30 +285,10 @@ class OCRService:
     def preprocess_digits(self, image: np.ndarray) -> np.ndarray:
         """
         Special preprocessing for digit fields (dates).
-        Uses padding instead of upscaling to preserve pixel geometry.
+        Uses shared utility for padding + contrast enhancement.
         """
-        h, w = image.shape[:2]
-        
-        # Add white padding on ALL sides (10% or minimum 10px)
-        # This prevents PaddleOCR from clipping leftmost/rightmost chars
-        pad_x = max(10, int(w * 0.10))
-        pad_y = max(10, int(h * 0.10))
-        padded = cv2.copyMakeBorder(
-            image,
-            pad_y, pad_y, pad_x, pad_x,  # top, bottom, left, right
-            cv2.BORDER_CONSTANT,
-            value=(255, 255, 255)  # white background
-        )
-        
-        # Convert to grayscale for contrast enhancement
-        gray = cv2.cvtColor(padded, cv2.COLOR_BGR2GRAY)
-        
-        # Apply CLAHE for better contrast (gentler settings)
-        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
-        enhanced = clahe.apply(gray)
-        
-        # Convert back to BGR
-        return cv2.cvtColor(enhanced, cv2.COLOR_GRAY2BGR)
+        from utils.ocr_utils import preprocess_for_ocr
+        return preprocess_for_ocr(image, apply_padding=True, apply_contrast=True)
     
     def extract_text_with_lang(
         self, 
@@ -241,32 +297,34 @@ class OCRService:
     ) -> List[Dict]:
         """
         Extract text from an image using OCR with a specific language.
+        Lazily loads the model if not already loaded.
         STRICTLY validates that non-English models produce native script output.
         """
-        if lang not in self._ocr_models:
+        # Use lazy loading
+        ocr = self._load_model(lang)
+        if ocr is None:
             return []
-            
-        ocr = self._ocr_models[lang]
-        result = ocr.predict(image)
+        
+        # Use .ocr() instead of .predict() to get consistent behavior
+        # parse_paddleocr_result handles the format differences
+        result = ocr.ocr(image, cls=False)
+        
+        # Use shared parsing logic
+        parsed_results = parse_paddleocr_result(result)
         
         extracted = []
         
-        # Parse PaddleOCR results
-        if isinstance(result, list) and len(result) > 0:
-            res = result[0]
-            texts = res.get("rec_texts", [])
-            scores = res.get("rec_scores", [])
+        for item in parsed_results:
+            text = item['text']
+            score = item['confidence']
             
-            for text, score in zip(texts, scores):
-                text = text.strip()
-                if text:
-                    # STRICT VALIDATION: Check if output is valid for this OCR model
-                    if text_matches_language(text, lang):
-                        extracted.append({
-                            'text': text,
-                            'score': score,
-                            'ocr_lang': lang
-                        })
+            # STRICT VALIDATION: Check if output is valid for this OCR model
+            if text_matches_language(text, lang):
+                extracted.append({
+                    'text': text,
+                    'score': score,
+                    'ocr_lang': lang
+                })
         
         return extracted
     
@@ -482,18 +540,8 @@ class OCRService:
                 # 3. PaddleOCR only - CNN-based, robust to blur
                 # 4. Length validation - Yemen ID is 11 digits
                 
-                h, w = crop.shape[:2]
-                
-                # Add white padding on ALL sides (10% or minimum 10px)
-                # This prevents PaddleOCR from clipping leftmost/rightmost chars
-                pad_x = max(10, int(w * 0.10))
-                pad_y = max(10, int(h * 0.10))
-                ocr_crop = cv2.copyMakeBorder(
-                    crop,
-                    pad_y, pad_y, pad_x, pad_x,  # top, bottom, left, right
-                    cv2.BORDER_CONSTANT,
-                    value=(255, 255, 255)  # white background
-                )
+                # Use shared padding utility
+                ocr_crop = add_ocr_padding(crop)
                 
                 # OCR on padded crop
                 paddle_digits = []
