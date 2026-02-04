@@ -1,401 +1,252 @@
 """
 Passport OCR Service
 
-Extracts data from Yemen passports using two methods:
-1. MRZ (Machine Readable Zone) - Primary, 99% accuracy (using PassportEye)
-2. Visual OCR (Bilingual English + Arabic) - Backup for non-MRZ fields
+Extracts data from Yemen passports using:
+1. YOLO Layout Detection - For detecting all field regions
+2. PaddleOCR - For reading text from detected regions
+3. MRZ Parser - For parsing machine readable zone data
+
+YOLO Classes (from classes-yemen-passport.txt):
+- MRZ, passport_no, DOB, POB, expiry_date, Issue_date
+- GivenName_arabic, GivenName_eng, surname_arabic, surname_eng
+- Profession_arabic, Profession_eng
+- Issuing_authority_arabic, Issuing_authority_eng
+- country_code, type, id
 
 Strategy:
-- Extract MRZ using PassportEye (robust detection)
-- Use OCR for fields not in MRZ (place of birth, occupation, address)
-- Cross-validate and merge results with MRZ priority
+- Use YOLO to detect ALL field regions
+- OCR each detected region
+- Parse MRZ for high-accuracy core fields
+- Return everything detected (caller decides what to use)
 """
 
 import cv2
 import numpy as np
-from typing import Dict, List, Optional, Tuple
-import os
-import tempfile
+from typing import Dict, List, Optional
 
 from services.ocr_service import get_ocr_service
 from services.passport_mrz_parser import parse_passport_mrz, extract_mrz_from_text
 from utils.image_manager import load_image
+from utils.ocr_utils import ocr_image_with_padding, ocr_to_single_string, ocr_mrz_line
 
 
-def extract_mrz_with_passporteye(image: np.ndarray) -> Optional[Dict]:
+# Passport YOLO class names (must match classes-yemen-passport.txt)
+PASSPORT_CLASSES = [
+    "DOB",
+    "GivenName_arabic",
+    "GivenName_eng",
+    "Issue_date",
+    "Issuing_authority_arabic",
+    "Issuing_authority_eng",
+    "MRZ",
+    "POB",
+    "Profession_arabic",
+    "Profession_eng",
+    "country_code",
+    "expiry_date",
+    "id",
+    "passport_no",
+    "surname_arabic",
+    "surname_eng",
+    "type",
+]
+
+
+def extract_all_fields_yolo(image: np.ndarray) -> Dict[str, any]:
     """
-    Extract MRZ using PassportEye library.
+    Extract ALL passport fields using YOLO layout detection.
     
-    PassportEye provides robust MRZ detection that handles:
-    - Rotated/skewed images
-    - Various lighting conditions
-    - Different passport types
+    Detects and OCRs every field the model can find.
+    Returns a dictionary with all detected field values.
     
     Args:
-        image: Passport image (numpy array)
+        image: Passport image (numpy array, BGR format)
         
     Returns:
-        Dictionary with MRZ data or None if not found
+        Dictionary with all detected fields (undetected fields are None)
     """
-    try:
-        from passporteye import read_mrz
-        
-        # Save image to temp file (PassportEye requires file path)
-        with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as tmp:
-            cv2.imwrite(tmp.name, image)
-            tmp_path = tmp.name
-        
-        try:
-            # Use PassportEye to detect and read MRZ
-            mrz = read_mrz(tmp_path)
-            
-            if mrz is None:
-                return None
-            
-            # Convert to our format
-            mrz_data = mrz.to_dict()
-            
-            # Build MRZ lines for our parser
-            mrz_string = mrz.aux.get('raw_text', '')
-            mrz_lines = [line for line in mrz_string.split('\n') if len(line) >= 40]
-            
-            return {
-                "success": True,
-                "passport_number": mrz_data.get('number'),
-                "surname": mrz_data.get('surname'),
-                "given_names": mrz_data.get('names'),
-                "full_name_english": f"{mrz_data.get('names', '')} {mrz_data.get('surname', '')}".strip(),
-                "nationality": mrz_data.get('nationality'),
-                "issuing_country": mrz_data.get('country'),
-                "date_of_birth": format_mrz_date(mrz_data.get('date_of_birth')),
-                "expiry_date": format_mrz_date(mrz_data.get('expiration_date')),
-                "gender": 'Male' if mrz_data.get('sex') == 'M' else 'Female' if mrz_data.get('sex') == 'F' else None,
-                "mrz_valid": mrz_data.get('valid_score', 0) > 50,
-                "confidence": min(mrz_data.get('valid_score', 0) / 100, 0.99),
-                "mrz_line1": mrz_lines[0] if len(mrz_lines) > 0 else None,
-                "mrz_line2": mrz_lines[1] if len(mrz_lines) > 1 else None,
-                "method": "passporteye"
-            }
-            
-        finally:
-            # Clean up temp file
-            if os.path.exists(tmp_path):
-                os.remove(tmp_path)
-                
-    except ImportError:
-        # PassportEye not installed, return None to use fallback
-        return None
-    except Exception as e:
-        # PassportEye failed, return None to use fallback
-        print(f"PassportEye error: {e}")
-        return None
-
-
-def format_mrz_date(date_str: str) -> Optional[str]:
-    """
-    Format MRZ date (YYMMDD) to ISO format (YYYY-MM-DD).
+    from services.layout_service import get_layout_service
     
-    Args:
-        date_str: Date in YYMMDD format
-        
-    Returns:
-        Date in YYYY-MM-DD format or None
-    """
-    if not date_str or len(date_str) != 6:
-        return None
-    
-    try:
-        yy = int(date_str[0:2])
-        mm = date_str[2:4]
-        dd = date_str[4:6]
-        
-        # Determine century
-        yyyy = 2000 + yy if yy <= 40 else 1900 + yy
-        
-        return f"{yyyy}-{mm}-{dd}"
-    except (ValueError, IndexError):
-        return None
-
-
-def extract_mrz_region_fallback(image: np.ndarray) -> Optional[Tuple[np.ndarray, List[str]]]:
-    """
-    Fallback: Extract MRZ region using pixel-based method.
-    
-    Used when PassportEye is not available or fails.
-    MRZ is typically in bottom 25% of passport.
-    
-    Args:
-        image: Passport image (numpy array)
-        
-    Returns:
-        Tuple of (mrz_image, mrz_lines) or None if not found
-    """
-    height, width = image.shape[:2]
-    
-    # Extract bottom portion where MRZ is located
-    mrz_start = int(height * 0.75)  # Bottom 25%
-    mrz_region = image[mrz_start:height, :]
-    
-    # Preprocess MRZ region for better OCR
-    gray = cv2.cvtColor(mrz_region, cv2.COLOR_BGR2GRAY) if len(mrz_region.shape) == 3 else mrz_region
-    
-    # Apply threshold to enhance contrast
-    _, thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-    
-    # Perform OCR on MRZ region
-    ocr = get_ocr_service()
-    result = ocr.ocr(thresh, cls=False)
-    
-    if not result or not result[0]:
-        return None
-    
-    # Extract text lines
-    mrz_lines = []
-    for line in result[0]:
-        if line[1][0]:  # If text exists
-            text = line[1][0].strip().upper()
-            # MRZ lines are exactly 44 characters
-            if len(text) >= 40:  # Allow some OCR error margin
-                mrz_lines.append(text)
-    
-    return (mrz_region, mrz_lines) if mrz_lines else None
-
-
-
-def extract_passport_fields_ocr(image: np.ndarray) -> Dict:
-    """
-    Extract passport fields using visual OCR.
-    
-    Extracts non-MRZ fields:
-    - Place of Birth (مكان الولادة / PLACE OF BIRTH)
-    - Profession/Occupation (المهنة / PROFESSION)
-    - Issue Date (تاريخ الإصدار / DATE OF ISSUE)
-    - Issuing Authority (جهة الإصدار / ISSUING AUTHORITY)
-    
-    Args:
-        image: Passport image
-        
-    Returns:
-        Dictionary of extracted fields
-    """
-    import re
-    
-    ocr = get_ocr_service()
-    result = ocr.ocr(image, cls=True)
-    
-    # Extract all text with position info
-    all_text = []
-    text_with_pos = []
-    if result and result[0]:
-        for line in result[0]:
-            if line[1][0]:
-                text = line[1][0].strip()
-                all_text.append(text)
-                # Store with bounding box for spatial analysis
-                text_with_pos.append({
-                    "text": text,
-                    "box": line[0],
-                    "confidence": line[1][1] if len(line[1]) > 1 else 0.9
-                })
-    
-    # Initialize fields
-    ocr_data = {
-        "place_of_birth": None,
-        "place_of_birth_arabic": None,
-        "profession": None,
+    result = {
+        # Initialize all possible fields as None
+        "passport_no": None,
+        "given_name_arabic": None,
+        "given_name_english": None,
+        "surname_arabic": None,
+        "surname_english": None,
+        "dob": None,
+        "pob": None,
+        "expiry_date": None,
+        "issue_date": None,
         "profession_arabic": None,
-        "issuance_date": None,
-        "issuing_authority": None,
+        "profession_english": None,
         "issuing_authority_arabic": None,
-        "raw_text": all_text
+        "issuing_authority_english": None,
+        "country_code": None,
+        "doc_type": None,
+        # MRZ handled separately
+        "mrz_fields": [],
+        "detected_labels": [],
     }
     
-    # Keywords for field detection (English and Arabic)
-    keywords = {
-        "place_of_birth": [
-            "place of birth", "birthplace", "مكان الولادة", "مكان الميلاد",
-            "محل الولادة", "مكان"
-        ],
-        "profession": [
-            "profession", "occupation", "المهنة", "مهنة", "الوظيفة"
-        ],
-        "issuance_date": [
-            "date of issue", "issue date", "تاريخ الإصدار", "تاريخ الاصدار",
-            "تاريخ المنح", "date issue"
-        ],
-        "issuing_authority": [
-            "issuing authority", "authority", "جهة الإصدار", "سلطة الإصدار",
-            "مكان الإصدار", "جهة"
-        ]
+    service = get_layout_service()
+    if not service.is_available("yemen_passport"):
+        print("YOLO passport model not available")
+        return result
+    
+    # Get all detections (return_all=True for multiple MRZ lines)
+    fields = service.detect_layout(image, "yemen_passport", return_all=True)
+    
+    if not fields:
+        print("No fields detected by YOLO")
+        return result
+    
+    result["detected_labels"] = list(fields.keys())
+    print(f"YOLO detected labels: {result['detected_labels']}")
+    
+    ocr = get_ocr_service()
+    
+    # Map YOLO class names to our result keys and OCR language
+    # Format: "yolo_class": ("result_key", "ocr_lang")
+    class_to_key = {
+        "passport_no": ("passport_no", "en"),
+        "GivenName_arabic": ("given_name_arabic", "ar"),
+        "GivenName_eng": ("given_name_english", "en"),
+        "surname_arabic": ("surname_arabic", "ar"),
+        "surname_eng": ("surname_english", "en"),
+        "DOB": ("dob", "en"),
+        "POB": ("pob", "ar"),  # Place of birth often in Arabic
+        "expiry_date": ("expiry_date", "en"),
+        "Issue_date": ("issue_date", "en"),
+        "Profession_arabic": ("profession_arabic", "ar"),
+        "Profession_eng": ("profession_english", "en"),
+        "Issuing_authority_arabic": ("issuing_authority_arabic", "ar"),
+        "Issuing_authority_eng": ("issuing_authority_english", "en"),
+        "country_code": ("country_code", "en"),
+        "type": ("doc_type", "en"),
     }
     
-    # Date pattern for extracting dates
-    date_pattern = r'\d{2}[/\-\.]\d{2}[/\-\.]\d{4}|\d{4}[/\-\.]\d{2}[/\-\.]\d{2}'
+    # Process each detected field
+    for label, detected_list in fields.items():
+        # Handle MRZ separately (needs special processing)
+        if label == "MRZ":
+            if isinstance(detected_list, list):
+                result["mrz_fields"] = detected_list
+            else:
+                result["mrz_fields"] = [detected_list]
+            continue
+        
+        # Skip unknown labels
+        if label not in class_to_key:
+            continue
+        
+        key, lang = class_to_key[label]
+        
+        # Handle list of detections: pick the one with highest YOLO confidence
+        if isinstance(detected_list, list) and len(detected_list) > 0:
+            # Sort by confidence and take the best one
+            detection = max(detected_list, key=lambda d: d.confidence)
+        else:
+            detection = detected_list
+        
+        # OCR the cropped region with correct language
+        try:
+            text, confidence = ocr_to_single_string(detection.crop, ocr, lang=lang)
+            if text:
+                result[key] = text
+        except Exception as e:
+            print(f"OCR failed for {label}: {e}")
     
-    # Known Yemen cities/governorates (issuing authorities)
-    yemen_authorities = [
-        "ADEN", "SANA'A", "SANAA", "TAIZ", "HODEIDAH", "MUKALLA",
-        "عدن", "صنعاء", "تعز", "الحديدة", "المكلا", "حضرموت"
-    ]
-    
-    # Process text to find fields
-    for i, text in enumerate(all_text):
-        text_lower = text.lower()
-        text_normalized = text_lower.replace("'", "").replace("'", "")
-        
-        # Get next text item if available
-        next_text = all_text[i + 1] if i + 1 < len(all_text) else None
-        
-        # ============ PLACE OF BIRTH ============
-        if not ocr_data["place_of_birth"]:
-            for keyword in keywords["place_of_birth"]:
-                if keyword.lower() in text_lower or keyword in text:
-                    # Check if value is on same line (after keyword)
-                    parts = text.split(keyword if keyword in text else keyword.upper())
-                    if len(parts) > 1 and parts[1].strip():
-                        value = parts[1].strip().strip('-:').strip()
-                        if value and len(value) > 1:
-                            ocr_data["place_of_birth"] = value
-                            break
-                    # Check next line
-                    elif next_text and len(next_text) > 1:
-                        # Skip if next text is another field label
-                        if not any(kw in next_text.lower() for kws in keywords.values() for kw in kws):
-                            ocr_data["place_of_birth"] = next_text
-                            break
-        
-        # ============ PROFESSION ============
-        if not ocr_data["profession"]:
-            for keyword in keywords["profession"]:
-                if keyword.lower() in text_lower or keyword in text:
-                    parts = text.split(keyword if keyword in text else keyword.upper())
-                    if len(parts) > 1 and parts[1].strip():
-                        value = parts[1].strip().strip('-:').strip()
-                        if value and len(value) > 1:
-                            ocr_data["profession"] = value
-                            break
-                    elif next_text and len(next_text) > 1:
-                        if not any(kw in next_text.lower() for kws in keywords.values() for kw in kws):
-                            ocr_data["profession"] = next_text
-                            break
-        
-        # ============ ISSUANCE DATE ============
-        if not ocr_data["issuance_date"]:
-            for keyword in keywords["issuance_date"]:
-                if keyword.lower() in text_lower or keyword in text:
-                    # Look for date in same line
-                    date_match = re.search(date_pattern, text)
-                    if date_match:
-                        ocr_data["issuance_date"] = date_match.group()
-                        break
-                    # Look for date in next line
-                    elif next_text:
-                        date_match = re.search(date_pattern, next_text)
-                        if date_match:
-                            ocr_data["issuance_date"] = date_match.group()
-                            break
-        
-        # ============ ISSUING AUTHORITY ============
-        if not ocr_data["issuing_authority"]:
-            # Check for known authority names
-            for authority in yemen_authorities:
-                if authority.lower() in text_lower or authority in text:
-                    ocr_data["issuing_authority"] = authority.upper() if authority.isascii() else authority
-                    break
-            
-            # Also check via keywords
-            if not ocr_data["issuing_authority"]:
-                for keyword in keywords["issuing_authority"]:
-                    if keyword.lower() in text_lower or keyword in text:
-                        parts = text.split(keyword if keyword in text else keyword.upper())
-                        if len(parts) > 1 and parts[1].strip():
-                            value = parts[1].strip().strip('-:').strip()
-                            if value and len(value) > 1:
-                                ocr_data["issuing_authority"] = value
-                                break
-                        elif next_text:
-                            # Check if next text is a known authority
-                            for auth in yemen_authorities:
-                                if auth.lower() in next_text.lower() or auth in next_text:
-                                    ocr_data["issuing_authority"] = auth.upper() if auth.isascii() else auth
-                                    break
-    
-    return ocr_data
+    return result
 
 
-
-def merge_mrz_and_ocr_data(mrz_data: Dict, ocr_data: Dict) -> Dict:
+def extract_mrz_from_fields(mrz_fields: List, ocr) -> Optional[Dict]:
     """
-    Merge MRZ and OCR data with priority to MRZ.
+    Extract and parse MRZ from detected MRZ field regions.
     
-    MRZ provides: passport_number, name, DOB, gender, expiry, nationality
-    OCR provides: place_of_birth, profession, issuance_date, issuing_authority
+    Expects exactly 2 MRZ detections (one per line), sorted by Y coordinate.
     
     Args:
-        mrz_data: Data from MRZ parser
-        ocr_data: Data from visual OCR
+        mrz_fields: List of LayoutField objects for MRZ detections (expects 2)
+        ocr: OCR service instance
         
     Returns:
-        Merged passport data
+        Parsed MRZ data or None
     """
-    merged = {
-        # Document type
-        "id_type": "yemen_passport",
-        
-        # MRZ fields (high confidence - 99%)
-        "passport_number": mrz_data.get("passport_number"),
-        "surname": mrz_data.get("surname"),
-        "given_names": mrz_data.get("given_names"),
-        "name_english": mrz_data.get("full_name_english"),
-        "date_of_birth": mrz_data.get("date_of_birth"),
-        "gender": mrz_data.get("gender"),
-        "expiry_date": mrz_data.get("expiry_date"),
-        "nationality": mrz_data.get("nationality"),
-        "country_code": mrz_data.get("issuing_country"),
-        
-        # OCR fields (medium confidence - 85%)
-        "place_of_birth": ocr_data.get("place_of_birth"),
-        "profession": ocr_data.get("profession"),
-        "issuance_date": ocr_data.get("issuance_date"),
-        "issuing_authority": ocr_data.get("issuing_authority"),
-        
-        # Metadata
-        "extraction_method": "MRZ_PRIMARY",
-        "mrz_valid": mrz_data.get("mrz_valid", False),
-        "mrz_confidence": mrz_data.get("confidence", 0.0),
-        "ocr_confidence": 0.85,
-        
-        # Raw data for debugging
-        "mrz_raw": {
-            "line1": mrz_data.get("mrz_line1"),
-            "line2": mrz_data.get("mrz_line2")
-        },
-        "ocr_raw_text": ocr_data.get("raw_text", [])
-    }
+    if not mrz_fields or len(mrz_fields) < 2:
+        print(f"MRZ extraction requires 2 detections, got {len(mrz_fields) if mrz_fields else 0}")
+        return None
     
-    return merged
+    # Sort by Y-coordinate (top to bottom)
+    mrz_fields_sorted = sorted(mrz_fields, key=lambda f: f.box[1])
+    
+    line1_field = mrz_fields_sorted[0]  # Top = Line 1
+    line2_field = mrz_fields_sorted[1]  # Bottom = Line 2
+    
+    mrz_lines = []
+    
+    # OCR Line 1 (with MRZ-specific preprocessing: upscale + binarization)
+    txt1, conf1 = ocr_mrz_line(line1_field.crop, ocr)
+    txt1 = txt1.upper()
+    print(f"  MRZ Line 1 OCR: '{txt1}' (conf: {conf1:.2f})")
+    if txt1:
+        mrz_lines.append(txt1)
+    
+    # OCR Line 2 (with MRZ-specific preprocessing: upscale + binarization)
+    txt2, conf2 = ocr_mrz_line(line2_field.crop, ocr)
+    txt2 = txt2.upper()
+    print(f"  MRZ Line 2 OCR: '{txt2}' (conf: {conf2:.2f})")
+    if txt2:
+        mrz_lines.append(txt2)
+    
+    # Need both lines
+    if len(mrz_lines) != 2:
+        print(f"MRZ OCR failed: got {len(mrz_lines)} lines, expected 2")
+        return None
+    
+    # Clean: ensure exactly 44 characters per line
+    cleaned_mrz = []
+    for line in mrz_lines:
+        if len(line) < 44:
+            line = line + '<' * (44 - len(line))
+        elif len(line) > 44:
+            line = line[:44]
+        cleaned_mrz.append(line)
+    
+    # Parse MRZ
+    mrz_data = parse_passport_mrz(cleaned_mrz)
+    if mrz_data.get("success"):
+        mrz_data["mrz_line1"] = cleaned_mrz[0]
+        mrz_data["mrz_line2"] = cleaned_mrz[1]
+        return mrz_data
+    
+    return None
 
 
-def extract_passport_data(image_path: str) -> Dict:
+def extract_passport_data(image_input) -> Dict:
     """
-    Main function: Extract all data from Yemen passport.
+    Main function: Extract all data from Yemen passport using YOLO.
     
     Process:
-    1. Load image
-    2. Try PassportEye for MRZ detection (robust, handles rotation/skew)
-    3. Fallback to pixel-based MRZ extraction if PassportEye fails
-    4. Perform visual OCR (supplementary data)
-    5. Merge results with MRZ priority
+    1. Load image (if path provided)
+    2. Use YOLO to detect ALL field regions (MRZ, names, dates, etc.)
+    3. OCR each detected region
+    4. Parse MRZ for high-accuracy core fields
+    5. Merge YOLO fields with MRZ parsed data (MRZ takes priority)
     
     Args:
-        image_path: Path to passport image file
+        image_input: Either a file path (str) or numpy array (BGR image)
         
     Returns:
         Complete passport data dictionary
     """
     try:
-        # Load image
-        image = load_image(image_path)
+        # Handle both file path and numpy array input
+        if isinstance(image_input, np.ndarray):
+            image = image_input
+        else:
+            image = load_image(image_input)
+            
         if image is None:
             return {
                 "success": False,
@@ -403,58 +254,77 @@ def extract_passport_data(image_path: str) -> Dict:
                 "id_type": "yemen_passport"
             }
         
+        # Extract ALL fields using YOLO
+        yolo_fields = extract_all_fields_yolo(image)
+        
+        # Parse MRZ if detected
+        ocr = get_ocr_service()
         mrz_data = None
+        if yolo_fields.get("mrz_fields"):
+            mrz_data = extract_mrz_from_fields(yolo_fields["mrz_fields"], ocr)
         
-        # Step 1: Try PassportEye first (robust MRZ detection)
-        passporteye_result = extract_mrz_with_passporteye(image)
-        
-        if passporteye_result and passporteye_result.get("success"):
-            mrz_data = passporteye_result
-            mrz_data["extraction_method"] = "PASSPORTEYE"
-        else:
-            # Step 2: Fallback to pixel-based extraction
-            mrz_result = extract_mrz_region_fallback(image)
-            
-            if mrz_result:
-                mrz_image, mrz_lines = mrz_result
-                
-                # Clean up MRZ lines (ensure exactly 44 chars)
-                cleaned_mrz = []
-                for line in mrz_lines[:2]:  # Only need first 2 lines
-                    # Pad or trim to 44 characters
-                    if len(line) < 44:
-                        line = line + '<' * (44 - len(line))
-                    elif len(line) > 44:
-                        line = line[:44]
-                    cleaned_mrz.append(line)
-                
-                if len(cleaned_mrz) == 2:
-                    # Parse MRZ using our parser
-                    mrz_data = parse_passport_mrz(cleaned_mrz)
-                    if mrz_data.get("success"):
-                        mrz_data["extraction_method"] = "PIXEL_FALLBACK"
-        
-        # Step 3: If MRZ extraction succeeded
-        if mrz_data and mrz_data.get("success"):
-            # Visual OCR for supplementary fields
-            ocr_data = extract_passport_fields_ocr(image)
-            
-            # Merge data
-            final_data = merge_mrz_and_ocr_data(mrz_data, ocr_data)
-            final_data["success"] = True
-            final_data["extraction_method"] = mrz_data.get("extraction_method", "MRZ_PRIMARY")
-            
-            return final_data
-        
-        # No MRZ found by either method
-        return {
-            "success": False,
-            "error": "MRZ not detected in image",
+        # Build final response
+        # Priority: MRZ parsed data > YOLO OCR fields
+        final_data = {
+            "success": True,
             "id_type": "yemen_passport",
-            "suggestion": "Ensure passport is flat and MRZ at bottom is clearly visible"
+            "extraction_method": "YOLO_FULL",
+            
+            # Core fields (MRZ priority if available)
+            "passport_number": (mrz_data.get("passport_number") if mrz_data else None) or yolo_fields.get("passport_no"),
+            "given_names": (mrz_data.get("given_names") if mrz_data else None) or yolo_fields.get("given_name_english"),
+            "surname": (mrz_data.get("surname") if mrz_data else None) or yolo_fields.get("surname_english"),
+            "name_english": None,  # Will be constructed below
+            "date_of_birth": (mrz_data.get("date_of_birth") if mrz_data else None) or yolo_fields.get("dob"),
+            "gender": mrz_data.get("gender") if mrz_data else None,
+            "expiry_date": (mrz_data.get("expiry_date") if mrz_data else None) or yolo_fields.get("expiry_date"),
+            "nationality": mrz_data.get("nationality") if mrz_data else None,
+            "country_code": (mrz_data.get("issuing_country") if mrz_data else None) or yolo_fields.get("country_code"),
+            
+            # Arabic name fields (YOLO only - not in MRZ)
+            "given_name_arabic": yolo_fields.get("given_name_arabic"),
+            "surname_arabic": yolo_fields.get("surname_arabic"),
+            
+            # Supplementary fields (YOLO only - not in MRZ)
+            "place_of_birth": yolo_fields.get("pob"),
+            "issuance_date": yolo_fields.get("issue_date"),
+            "issuing_authority": yolo_fields.get("issuing_authority_english"),
+            "issuing_authority_arabic": yolo_fields.get("issuing_authority_arabic"),
+            "profession": yolo_fields.get("profession_english"),
+            "profession_arabic": yolo_fields.get("profession_arabic"),
+            
+            # MRZ metadata
+            "mrz_valid": mrz_data.get("mrz_valid", False) if mrz_data else False,
+            "mrz_confidence": mrz_data.get("confidence", 0.0) if mrz_data else 0.0,
+            "mrz_raw": {
+                "line1": mrz_data.get("mrz_line1") if mrz_data else None,
+                "line2": mrz_data.get("mrz_line2") if mrz_data else None,
+            },
+            
+            # Debug info
+            "detected_labels": yolo_fields.get("detected_labels", []),
         }
         
+        # Construct full English name
+        given = final_data.get("given_names") or ""
+        surname = final_data.get("surname") or ""
+        final_data["name_english"] = f"{given} {surname}".strip() or None
+        
+        # Check if we got minimum required data
+        if not final_data["passport_number"] and not mrz_data:
+            return {
+                "success": False,
+                "error": "Could not extract passport data. No MRZ or passport number detected.",
+                "id_type": "yemen_passport",
+                "detected_labels": yolo_fields.get("detected_labels", []),
+                "suggestion": "Please retake the photo. Ensure passport is flat, well-lit, and all text is visible."
+            }
+        
+        return final_data
+        
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         return {
             "success": False,
             "error": f"Passport extraction failed: {str(e)}",
