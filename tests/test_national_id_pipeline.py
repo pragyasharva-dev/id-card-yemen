@@ -1,11 +1,13 @@
 """
-Test script for YOLO + OCR pipeline.
+Test script for National ID YOLO + OCR pipeline.
 
 Usage:
-    uv run python tests/test_yolo_pipeline.py <image_path> [--side front|back]
+    .venv\Scripts\activate
+    python tests/test_national_id_pipeline.py <image_path> [--side front|back]
 
 Example:
-    uv run python tests/test_yolo_pipeline.py data/id_cards/sample_front.jpg --side front
+    python tests/test_national_id_pipeline.py data/id_cards/sample_front.jpg --side front
+    python tests/test_national_id_pipeline.py data/id_cards/sample_back.jpg --side back -v
 """
 import sys
 import argparse
