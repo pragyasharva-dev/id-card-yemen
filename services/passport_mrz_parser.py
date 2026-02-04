@@ -215,7 +215,8 @@ def parse_mrz_line2(line: str) -> Dict:
     gender = gender_map.get(gender_code, None)
     
     # Validate checksums
-    passport_valid = validate_check_digit(passport_number_raw[0:8], passport_check)
+    # Note: passport_number_raw is always 9 chars (8-digit numbers have '<' as 9th char)
+    passport_valid = validate_check_digit(passport_number_raw, passport_check)
     dob_valid = validate_check_digit(dob_raw, dob_check)
     expiry_valid = validate_check_digit(expiry_raw, expiry_check)
     
