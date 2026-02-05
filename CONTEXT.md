@@ -65,7 +65,7 @@ graph TD
     - `test_routes.py`: Endpoints for testing and debugging.
     - `test_routes.py`: Endpoints for testing and debugging.
 - **`services/`**: Core business logic.
-    - `layout_service.py`: YOLO-based field detection.
+    - `layout_service.py`: YOLO-based field detection (Reduces need for NER).
     - `ocr_service.py`: Text extraction & ID pattern matching.
     - `face_recognition.py`: Face detection & comparison.
     - `id_database.py`: **NEW** - ID card retrieval logic for verification.
