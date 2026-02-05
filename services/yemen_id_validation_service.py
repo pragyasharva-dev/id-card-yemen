@@ -34,6 +34,7 @@ from services.document_validation_helpers import (
     get_document_boundary,
     check_glare,
 )
+from utils.exceptions import ServiceError
 
 
 def _check_resolution(image: np.ndarray) -> Dict[str, Any]:
@@ -201,19 +202,20 @@ def validate_yemen_id(
         return result
 
     if front_image is None or front_image.size == 0:
-        result["error"] = "Invalid front image"
-        return result
+        raise ServiceError("Invalid front image", code="INVALID_FRONT_IMAGE")
 
     # Back optional for backward compatibility but recommended
     if back_image is not None and back_image.size == 0:
         back_image = None
 
-    # ---------- Front ----------
     res_front = _check_resolution(front_image)
     result["checks_front"]["resolution"] = res_front
     if not res_front["passed"]:
-        result["error"] = "Front: " + (res_front.get("detail") or "Image too small")
-        return result
+        raise ServiceError(
+            "Front: " + (res_front.get("detail") or "Image too small"),
+            code="FRONT_RESOLUTION_FAILED",
+            details={"min_side": res_front.get("score"), "threshold": res_front.get("threshold")}
+        )
 
     face_detected = False
     if insightface_available():
