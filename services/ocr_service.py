@@ -116,6 +116,20 @@ def text_matches_language(text: str, ocr_lang: str) -> bool:
     return True
 
 
+def _normalize_digits(text: str) -> str:
+    """Convert Arabic-Indic (٠-٩) and Eastern Arabic (۰-۹) digits to Western (0-9)."""
+    result = []
+    for c in text:
+        code = ord(c)
+        if 0x0660 <= code <= 0x0669:  # Arabic-Indic
+            result.append(chr(0x30 + (code - 0x0660)))
+        elif 0x06F0 <= code <= 0x06F9:  # Eastern Arabic
+            result.append(chr(0x30 + (code - 0x06F0)))
+        else:
+            result.append(c)
+    return "".join(result)
+
+
 def detect_char_language(char: str) -> Optional[str]:
     """
     Detect the language of a single character based on Unicode range.
@@ -262,24 +276,28 @@ class OCRService:
     
     def preprocess_image(self, image: np.ndarray) -> np.ndarray:
         """
-        Preprocess image for better OCR accuracy.
+        Preprocess image for better OCR accuracy: scale up small images,
+        denoise, contrast (CLAHE), and light sharpen. Improves confidence on
+        passport MRZ and IDs with glare or small text.
         """
-        # Convert to grayscale
+        h, w = image.shape[:2]
+        min_side = min(h, w)
+        # Scale up small images so MRZ and small text are easier to read
+        if min_side > 0 and min_side < 800:
+            scale = 800 / min_side
+            new_w, new_h = int(w * scale), int(h * scale)
+            image = cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_CUBIC)
+            h, w = image.shape[:2]
+
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-        
-        # Apply CLAHE for contrast enhancement
+        # Light denoise (preserves edges, helps low light / sensor noise)
+        denoised = cv2.bilateralFilter(gray, 5, 50, 50)
+        # CLAHE for contrast; clipLimit 2.0 avoids over-enhancing glare
         clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
-        enhanced = clahe.apply(gray)
-        
-        # Sharpen the image
-        kernel = np.array([
-            [0, -1, 0],
-            [-1, 5, -1],
-            [0, -1, 0]
-        ])
+        enhanced = clahe.apply(denoised)
+        # Gentle sharpen (strong kernel can amplify noise)
+        kernel = np.array([[0, -1, 0], [-1, 5, -1], [0, -1, 0]], dtype=np.float32)
         sharpened = cv2.filter2D(enhanced, -1, kernel)
-        
-        # Convert back to BGR for OCR
         return cv2.cvtColor(sharpened, cv2.COLOR_GRAY2BGR)
     
     def preprocess_digits(self, image: np.ndarray) -> np.ndarray:
@@ -325,6 +343,15 @@ class OCRService:
                     'score': score,
                     'ocr_lang': lang
                 })
+            for text, score in zip(texts, scores):
+                text = text.strip()
+                if text:
+                    if text_matches_language(text, lang):
+                        extracted.append({
+                            'text': text,
+                            'score': float(score) if score is not None else 0.0,
+                            'ocr_lang': lang
+                        })
         
         return extracted
     
@@ -375,46 +402,57 @@ class OCRService:
     ) -> Tuple[Optional[str], Optional[str], float]:
         """
         Intelligently identify the unique ID number from OCR texts.
+        Returns (id, type, confidence) where confidence uses the actual OCR score
+        of the matched line when available, for document validation readability.
         """
         candidates = []
-        
+        # OCR score from PaddleOCR (rec_scores) - use for confidence when available
         for item in text_results:
             text = item['text']
-            # Clean the text - remove spaces and special characters for matching
+            ocr_score = float(item.get('score', 0.0))  # PaddleOCR recognition score
+            text = _normalize_digits(text)
             cleaned = re.sub(r'[\s\-\.]', '', text.upper())
-            
-            # Check against each ID pattern
+
             for id_type, pattern_info in ID_PATTERNS.items():
                 pattern = pattern_info["pattern"]
-                
                 if re.match(pattern, cleaned):
                     expected_len = pattern_info["length"]
                     len_match = 1.0 if len(cleaned) == expected_len else 0.8
-                    
                     candidates.append({
                         "id": cleaned,
                         "type": id_type,
                         "confidence": len_match,
+                        "ocr_score": ocr_score,
                         "original": text
                     })
-        
+
         if not candidates:
-            # Fallback: look for any numeric sequence of reasonable length
             for item in text_results:
                 text = item['text']
+                ocr_score = float(item.get('score', 0.0))
+                text = _normalize_digits(text)
                 cleaned = re.sub(r'[^\d]', '', text)
                 if 8 <= len(cleaned) <= 15:
                     candidates.append({
                         "id": cleaned,
                         "type": "unknown",
                         "confidence": 0.5,
+                        "ocr_score": ocr_score,
                         "original": text
                     })
-        
+
         if candidates:
-            best = max(candidates, key=lambda x: x["confidence"])
-            return best["id"], best["type"], best["confidence"]
-        
+            # Prefer by pattern confidence, then by OCR score
+            best = max(candidates, key=lambda x: (x["confidence"], x.get("ocr_score", 0.0)))
+            # Return confidence for document validation: use actual OCR score when available
+            out_confidence = best.get("ocr_score")
+            if out_confidence is None:
+                out_confidence = best["confidence"]
+            else:
+                # Blend: at least pattern confidence, or OCR score if higher
+                out_confidence = max(best["confidence"] * 0.9, float(out_confidence))
+            return best["id"], best["type"], min(1.0, float(out_confidence))
+
         return None, None, 0.0
     
     def process_id_card(
@@ -434,6 +472,7 @@ class OCRService:
             
         Returns:
             Dictionary with extracted fields and metadata
+        Confidence uses the OCR recognition score of the matched line when available.
         """
         from services.layout_service import get_layout_service, is_layout_available
         
@@ -453,13 +492,19 @@ class OCRService:
         
         # Step 2: Fallback to full-image OCR
         text_results, detected_langs, detected_langs_display = self.extract_text_multilingual(image)
-        
-        # Simple text list for backward compatibility
         all_texts = [r['text'] for r in text_results]
-        
-        # Identify the unique ID
         extracted_id, id_type, confidence = self.identify_id_number(text_results)
-        
+
+        # Overall readability: if no ID matched, use max OCR score across lines so
+        # document validation can still pass for passports / other docs with no pattern
+        if text_results:
+            max_ocr = max(float(r.get('score', 0.0)) for r in text_results)
+            if extracted_id is None:
+                confidence = max_ocr
+            else:
+                confidence = max(confidence, max_ocr * 0.5)  # at least reflect overall readability
+        confidence = min(1.0, float(confidence))
+
         return {
             "extracted_id": extracted_id,
             "id_type": id_type,

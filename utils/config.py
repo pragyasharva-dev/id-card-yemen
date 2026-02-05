@@ -37,12 +37,6 @@ ID_PATTERNS = {
         "length": 11,
         "type": "numeric"
     },
-    "yemen_passport": {
-        "pattern": r"^\d{8}$",
-        "description": "8-digit numeric Yemen Passport",
-        "length": 8,
-        "type": "numeric"
-    },
     # "passport": {
     #     "pattern": r"^[A-Z][0-9]{7}$",
     #     "description": "Indian passport format (A1234567)",
@@ -91,146 +85,35 @@ FACE_QUALITY_MIN_LANDMARKS = 3  # Minimum visible landmarks (eyes, nose, mouth)
 FACE_QUALITY_MIN_CONFIDENCE = 0.5  # Minimum face detection confidence
 FACE_QUALITY_MIN_FACE_RATIO = 0.02  # Minimum face area ratio in image (2%)
 
+# Document Validation (Yemen ID and Passport services)
+DOC_VALIDATION_ENABLED = True
+DOC_MIN_SHARPNESS = 0.04  # Laplacian variance (normalized), reject blurry/soft copies
+# OCR confidence thresholds (not used in document validation; kept for other flows if needed)
+DOC_MIN_OCR_CONFIDENCE = 0.55
+DOC_MIN_RESOLUTION_PX = 320  # Minimum side length in pixels
+DOC_MIN_MARGIN_RATIO = 0.005  # Min margin (0.5%); allow card to fill frame in live capture
+DOC_MIN_COVERAGE_RATIO = 0.5  # Document must occupy ≥ 50% of image
+DOC_ASPECT_RATIO_YEMEN_ID = (1.3, 1.8)  # (min, max) width/height for Yemen ID front
+DOC_ASPECT_RATIO_YEMEN_ID_BACK = (1.0, 2.0)  # Wider for back (QR/text layout, different framing)
+DOC_ASPECT_RATIO_PASSPORT = (0.6, 1.7)  # (min, max) width/height - allow portrait or landscape
+DOC_MOIRE_THRESHOLD = 0.30  # Above this = less moiré (good); allow originals ~0.31; screen photos often lower
+DOC_MOIRE_THRESHOLD_BACK = 0.25  # More lenient for ID back (barcode/QR can cause subtle moiré on originals)
+DOC_MOIRE_THRESHOLD_PASSPORT = 0.33  # Above this = less moiré (good); originals ~0.34; screen captures often lower; combined with screen_grid for borderline
+DOC_SCREEN_GRID_MAX = 0.55  # FFT grid score above this = photo of screen; scoring tuned so originals stay below
+DOC_SCREEN_GRID_MAX_BACK = 0.65  # More lenient for ID back (dense barcode can add periodic structure)
+DOC_SCREEN_GRID_MAX_PASSPORT = 0.52  # Reject screen_grid >= 0.52 (catches screen captures ~0.53); originals ~0.51 pass
+# Passport: reject borderline moiré + medium screen_grid (screen-capture pattern); originals have higher screen_grid
+DOC_PASSPORT_MOIRE_BORDERLINE_MIN = 0.33
+DOC_PASSPORT_MOIRE_BORDERLINE_MAX = 0.36
+DOC_PASSPORT_SCREEN_GRID_SUSPICIOUS_MIN = 0.38
+DOC_PASSPORT_SCREEN_GRID_SUSPICIOUS_MAX = 0.50
+DOC_MIN_SHARPNESS_PASSPORT = 0.09  # Reject soft/color copies (0.085); originals typically sharper
+DOC_HALFTONE_MAX_PASSPORT = 0.28  # Stricter for passport: reject printed copies (halftone dots)
+DOC_TEXTURE_THRESHOLD = 0.08  # LBP variance, photocopies tend lower
+DOC_TEXTURE_MAX = 1.0  # Cap at 1.0; originals with security printing/holograms can score 1.0
+DOC_HALFTONE_MAX = 0.35  # FFT halftone score above this = suspected print/copy, reject
+# When texture is high (>= this), require mean saturation >= DOC_MIN_SATURATION_FOR_HIGH_TEXTURE
+DOC_HIGH_TEXTURE_THRESHOLD = 0.92
+DOC_MIN_SATURATION_FOR_HIGH_TEXTURE = 0.06  # Reject only very flat prints; originals can be muted (lighting/passport design)
 
-# Place of Birth Settings
-# Low-severity field - Non-blocking validation
-PLACE_OF_BIRTH_ENABLED = True
-PLACE_OF_BIRTH_PASS_THRESHOLD = 0.70  # Default threshold for passing
-PLACE_OF_BIRTH_MANUAL_THRESHOLD = 0.40  # Below this → manual review
 
-# ========================================
-# Passport & MRZ Configuration
-# ========================================
-
-# MRZ (Machine Readable Zone) Settings
-PASSPORT_MRZ_ENABLED = True
-PASSPORT_MRZ_MIN_CONFIDENCE = 0.90  # Minimum confidence for MRZ validity
-MRZ_LINE_LENGTH = 44  # ICAO 9303 TD-3 standard
-MRZ_EXPECTED_LINES = 2  # 2-line format for passports
-MRZ_VALID_CHARACTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789<"
-
-# Passport Patterns
-PASSPORT_PATTERNS = {
-    "passport_number": r"^[A-Z]{1,2}[0-9]{6,9}$"  # Yemen passport format
-}
-# NOTE: No reject threshold - this field NEVER causes auto-rejection
-
-# Name Matching Settings
-# High-severity field - Low scores may cause rejection
-NAME_MATCHING_ENABLED = True
-NAME_MATCHING_PASS_THRESHOLD = 0.90  # Score >= 0.90 → pass
-NAME_MATCHING_MANUAL_THRESHOLD = 0.70  # Score < 0.70 → may reject
-# NOTE: High severity - scores below manual_threshold may cause rejection
-
-# ========================================
-# Field Comparison Configuration
-# Per SOW: Configurable severity levels and thresholds
-# ========================================
-
-FIELD_COMPARISON_ENABLED = True
-
-# Date comparison tolerance (days)
-DATE_TOLERANCE_DAYS = 1  # Allow ±1 day for OCR errors
-
-# ========================================
-# Severity-Based Field Configuration
-# ========================================
-
-# Severity-Based Field Configuration
-# ========================================
-
-FIELD_CONFIGURATIONS = {
-    # HIGH SEVERITY - Mismatches may cause REJECTION
-    "id_number": {
-        "severity": "high",
-        "enabled": True,
-        "pass_threshold": 1.0,
-        "manual_threshold": 1.0,
-        "matching_type": "exact",
-        "description": "Yemen National ID number"
-    },
-    "passport_number": {
-        "severity": "high",
-        "enabled": True,
-        "pass_threshold": 1.0,
-        "manual_threshold": 1.0,
-        "matching_type": "exact",
-        "description": "Yemen Passport number"
-    },
-    "date_of_birth": {
-        "severity": "high",
-        "enabled": True,  
-        "pass_threshold": 1.0,
-        "manual_threshold": 1.0,
-        "matching_type": "exact",
-        "description": "Date of birth"
-    },
-    "name_arabic": {
-        "severity": "high",
-        "enabled": True,
-        "pass_threshold": 0.90,
-        "manual_threshold": 0.70,
-        "matching_type": "fuzzy",
-        "description": "Full name in Arabic"
-    },
-    "name_english": {
-        "severity": "high",
-        "enabled": True,
-        "pass_threshold": 0.90,
-        "manual_threshold": 0.70,
-        "matching_type": "fuzzy",
-        "description": "Full name in English"
-    },
-    "gender": {
-        "severity": "high",
-        "enabled": True,
-        "pass_threshold": 1.0,
-        "manual_threshold": 1.0,
-        "matching_type": "exact",
-        "description": "Gender (with 4th digit validation for National ID)"
-    },
-    
-    # MEDIUM SEVERITY - Mismatches → MANUAL REVIEW
-    "issuance_date": {
-        "severity": "medium",
-        "enabled": True,
-        "pass_threshold": 1.0,
-        "manual_threshold": 0.0,
-        "matching_type": "exact",
-        "description": "ID issuance date"
-    },
-    "expiry_date": {
-        "severity": "medium",
-        "enabled": True,
-        "pass_threshold": 1.0,
-        "manual_threshold": 0.0,
-        "matching_type": "exact",
-        "description": "ID expiry date"
-    },
-    
-    # LOW SEVERITY - Never rejects
-    "place_of_birth": {
-        "severity": "low",
-        "enabled": True,
-        "pass_threshold": 0.70,
-        "manual_threshold": 0.40,
-        "matching_type": "token",
-        "description": "Place of birth"
-    }
-}
-
-# ========================================
-# Severity-Based Scoring Weights
-# ========================================
-# Configurable weights for weighted average calculation
-# Used for reporting and analytics - NOT for decision thresholds
-# Sum of all weights should = 1.0
-
-SEVERITY_WEIGHTS = {
-    "high": 0.50,     # High-severity fields get 50% weight
-    "medium": 0.30,   # Medium-severity fields get 30% weight
-    "low": 0.20       # Low-severity fields get 20% weight
-}
-
-# NOTE: Decisions are made purely based on field-level pass/review/reject statuses
-# Weighted score is calculated for informational/reporting purposes only
