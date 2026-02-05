@@ -598,7 +598,6 @@ class SelfieVerificationResponse(BaseModel):
 
 
 # =====================================================
-<<<<<<< HEAD
 # DOCUMENT VALIDATION (Yemen ID & Passport)
 # =====================================================
 
@@ -781,5 +780,4 @@ class DocumentDateValidationResponse(BaseModel):
                 "warnings": []
             }
         }
-9e4b74fc983bb56addf0508742119ae06c547b1c
 
