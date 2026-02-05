@@ -84,6 +84,9 @@ class FaceExtractor:
             bbox = face.bbox
             return (bbox[2] - bbox[0]) * (bbox[3] - bbox[1])
         
+        if not faces:
+            return None
+        
         return max(faces, key=face_area)
     
     def extract_face_region(
