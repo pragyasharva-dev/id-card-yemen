@@ -16,6 +16,7 @@ from typing import Dict, List, Optional, Tuple
 from datetime import datetime
 
 from services.translation_service import translate_text
+from utils.date_utils import format_date
 
 
 def extract_dates_from_texts(texts: List[str]) -> Tuple[Optional[str], Optional[str]]:
@@ -69,7 +70,7 @@ def extract_dates_from_texts(texts: List[str]) -> Tuple[Optional[str], Optional[
                     if date_obj.year < 1990:
                         continue
                         
-                    formatted_date = date_obj.strftime("%Y-%m-%d")
+                    formatted_date = format_date(date_obj)
                     found_dates.append((formatted_date, date_obj))
                 except (ValueError, IndexError):
                     continue
@@ -98,22 +99,9 @@ def extract_name_from_texts(texts: List[str], text_results: List[Dict]) -> Tuple
     Returns:
         Tuple of (arabic_name, english_name)
     """
-    from services.ner_extractor import get_ner_extractor, is_ner_available
     
     arabic_name = None
     english_name = None
-    
-    # Try NER-based extraction first
-    if is_ner_available():
-        try:
-            ner = get_ner_extractor()
-            arabic_name, english_name = ner.extract_person_names(text_results)
-            
-            # If NER found results, return them
-            if arabic_name or english_name:
-                return arabic_name, english_name
-        except Exception as e:
-            print(f"NER extraction failed: {e}, falling back to heuristics")
     
     # Fallback to heuristic-based extraction
     # Look for Arabic name (usually longer text blocks in Arabic)
@@ -362,7 +350,7 @@ def extract_date_of_birth(texts: List[str]) -> Optional[str]:
                                 # Birth dates should be in the past and reasonable (age 0-100)
                                 age = (datetime.now() - date_obj).days / 365.25
                                 if 0 < age <= 100:
-                                    return date_obj.strftime("%Y-%m-%d")
+                                    return format_date(date_obj)
                             except (ValueError, IndexError):
                                 continue
     
@@ -395,7 +383,7 @@ def extract_date_of_birth(texts: List[str]) -> Optional[str]:
         # Sort by age (oldest first)
         found_dates.sort(key=lambda x: x[1], reverse=True)
         # Return the oldest date (most likely the birth date, not issuance/expiry)
-        return found_dates[0][0].strftime("%Y-%m-%d")
+        return format_date(found_dates[0][0])
     
     return None
 
