@@ -25,6 +25,7 @@ from services.document_validation_helpers import (
     get_document_boundary,
     check_glare,
 )
+from utils.exceptions import ServiceError
 
 
 def _check_resolution(image: np.ndarray) -> Dict[str, Any]:
@@ -142,15 +143,17 @@ def validate_passport(image: np.ndarray) -> Dict[str, Any]:
         return result
 
     if image is None or image.size == 0:
-        result["error"] = "Invalid image"
-        return result
+        raise ServiceError("Invalid image", code="INVALID_IMAGE")
 
     # Resolution first
     res = _check_resolution(image)
     result["checks"]["resolution"] = res
     if not res["passed"]:
-        result["error"] = res.get("detail", "Image too small")
-        return result
+        raise ServiceError(
+            res.get("detail", "Image too small"),
+            code="RESOLUTION_FAILED",
+            details={"min_side": res.get("score"), "threshold": res.get("threshold")}
+        )
 
     face_detected = False
     if insightface_available():

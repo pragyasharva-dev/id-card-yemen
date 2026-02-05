@@ -16,6 +16,7 @@ from datetime import datetime
 import re
 
 from utils.date_utils import format_date
+from utils.exceptions import ServiceError
 
 
 def calculate_check_digit(data: str) -> str:
@@ -126,7 +127,7 @@ def parse_mrz_line1(line: str) -> Dict:
         }
     """
     if not line or len(line) != 44:
-        return {"error": "Invalid MRZ line 1 length"}
+        raise ServiceError("Invalid MRZ line 1 length", code="MRZ_LINE1_INVALID")
     
     line = line.upper().strip()
     
@@ -185,7 +186,7 @@ def parse_mrz_line2(line: str) -> Dict:
         }
     """
     if not line or len(line) != 44:
-        return {"error": "Invalid MRZ line 2 length"}
+        raise ServiceError("Invalid MRZ line 2 length", code="MRZ_LINE2_INVALID")
     
     line = line.upper().strip()
     
@@ -258,23 +259,11 @@ def parse_passport_mrz(mrz_lines: List[str]) -> Dict:
         Complete parsed passport data with validation status
     """
     if not mrz_lines or len(mrz_lines) != 2:
-        return {
-            "success": False,
-            "error": "Invalid MRZ format - expected 2 lines",
-            "mrz_valid": False
-        }
+        raise ServiceError("Invalid MRZ format - expected 2 lines", code="MRZ_FORMAT_INVALID")
     
-    # Parse both lines
+    # Parse both lines (exceptions propagate automatically)
     line1_data = parse_mrz_line1(mrz_lines[0])
     line2_data = parse_mrz_line2(mrz_lines[1])
-    
-    # Check for parsing errors
-    if "error" in line1_data or "error" in line2_data:
-        return {
-            "success": False,
-            "error": line1_data.get("error") or line2_data.get("error"),
-            "mrz_valid": False
-        }
     
     # Combine data
     result = {

@@ -12,6 +12,7 @@ from .face_extractor import (
     get_embedding, 
     is_available as insightface_available
 )
+from utils.exceptions import ServiceError, ModelLoadError
 
 
 def cosine_similarity(embedding1: np.ndarray, embedding2: np.ndarray) -> float:
@@ -84,8 +85,7 @@ def compare_faces(
     }
     
     if not insightface_available():
-        result["error"] = "InsightFace not installed"
-        return result
+        raise ModelLoadError("InsightFace", reason="Not installed")
     
     # Get embeddings from both images
     embedding1 = get_embedding(image1)
@@ -95,12 +95,10 @@ def compare_faces(
     result["image2_face_detected"] = embedding2 is not None
     
     if embedding1 is None:
-        result["error"] = "No face detected in first image (ID card)"
-        return result
+        raise ServiceError("No face detected in first image (ID card)", code="FACE_NOT_DETECTED_ID")
     
     if embedding2 is None:
-        result["error"] = "No face detected in second image (selfie)"
-        return result
+        raise ServiceError("No face detected in second image (selfie)", code="FACE_NOT_DETECTED_SELFIE")
     
     # Compute similarity
     result["similarity_score"] = compare_embeddings(embedding1, embedding2)
@@ -211,21 +209,11 @@ def verify_from_paths(
     """
     id_card_image = cv2.imread(id_card_path)
     if id_card_image is None:
-        return {
-            "similarity_score": 0.0,
-            "id_card_face_detected": False,
-            "selfie_face_detected": False,
-            "error": f"Could not read ID card image: {id_card_path}"
-        }
+        raise ServiceError(f"Could not read ID card image: {id_card_path}", code="IMAGE_READ_FAILED")
     
     selfie_image = cv2.imread(selfie_path)
     if selfie_image is None:
-        return {
-            "similarity_score": 0.0,
-            "id_card_face_detected": False,
-            "selfie_face_detected": False,
-            "error": f"Could not read selfie image: {selfie_path}"
-        }
+        raise ServiceError(f"Could not read selfie image: {selfie_path}", code="IMAGE_READ_FAILED")
     
     return verify_identity(id_card_image, selfie_image)
 

@@ -12,10 +12,12 @@ Then access the API documentation at http://localhost:8000/docs
 import logging
 from pathlib import Path
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
+
+from utils.exceptions import AppError
 
 # Configure logging
 logging.basicConfig(
@@ -108,6 +110,24 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# =============================================================================
+# GLOBAL EXCEPTION HANDLER
+# =============================================================================
+
+@app.exception_handler(AppError)
+async def app_error_handler(request: Request, exc: AppError):
+    """
+    Global handler for all AppError exceptions.
+    
+    Converts custom exceptions to consistent JSON responses.
+    """
+    logger.warning(f"[{exc.code}] {exc.message} | Details: {exc.details}")
+    return JSONResponse(
+        status_code=exc.status_code,
+        content=exc.to_dict()
+    )
 
 # Include API routes
 from api.routes import router as production_router

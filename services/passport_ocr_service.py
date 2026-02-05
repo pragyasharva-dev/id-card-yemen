@@ -28,6 +28,7 @@ from services.ocr_service import get_ocr_service
 from services.passport_mrz_parser import parse_passport_mrz, extract_mrz_from_text
 from utils.image_manager import load_image
 from utils.ocr_utils import ocr_image_with_padding, ocr_to_single_string, ocr_mrz_line
+from utils.exceptions import ServiceError
 
 
 # Passport YOLO class names (must match classes-yemen-passport.txt)
@@ -242,17 +243,17 @@ def extract_passport_data(image_input) -> Dict:
     """
     try:
         # Handle both file path and numpy array input
-        if isinstance(image_input, np.ndarray):
-            image = image_input
-        else:
-            image = load_image(image_input)
-            
+        try:
+            # Handle both file path and numpy array input
+            if isinstance(image_input, np.ndarray):
+                image = image_input
+            else:
+                image = load_image(image_input)
+        except ValueError as e:
+            raise ServiceError(f"Failed to load image: {str(e)}", code="IMAGE_LOAD_FAILED")
+
         if image is None:
-            return {
-                "success": False,
-                "error": "Failed to load image",
-                "id_type": "yemen_passport"
-            }
+            raise ServiceError("Failed to load image", code="IMAGE_LOAD_FAILED")
         
         # Extract ALL fields using YOLO
         yolo_fields = extract_all_fields_yolo(image)
@@ -312,24 +313,26 @@ def extract_passport_data(image_input) -> Dict:
         
         # Check if we got minimum required data
         if not final_data["passport_number"] and not mrz_data:
-            return {
-                "success": False,
-                "error": "Could not extract passport data. No MRZ or passport number detected.",
-                "id_type": "yemen_passport",
-                "detected_labels": yolo_fields.get("detected_labels", []),
-                "suggestion": "Please retake the photo. Ensure passport is flat, well-lit, and all text is visible."
-            }
+            raise ServiceError(
+                "Could not extract passport data. No MRZ or passport number detected.",
+                code="PASSPORT_DATA_MISSING",
+                details={
+                    "detected_labels": yolo_fields.get("detected_labels", []),
+                    "suggestion": "Please retake the photo. Ensure passport is flat, well-lit, and all text is visible."
+                }
+            )
         
         return final_data
         
+    except ServiceError:
+        raise  # Re-raise our custom exceptions
     except Exception as e:
         import traceback
         traceback.print_exc()
-        return {
-            "success": False,
-            "error": f"Passport extraction failed: {str(e)}",
-            "id_type": "yemen_passport"
-        }
+        raise ServiceError(
+            f"Passport extraction failed: {str(e)}",
+            code="PASSPORT_EXTRACTION_FAILED"
+        )
 
 
 def validate_passport_data(passport_data: Dict) -> Dict:
