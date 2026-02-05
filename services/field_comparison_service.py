@@ -24,6 +24,7 @@ from utils.config import (
     DATE_TOLERANCE_DAYS, 
     SEVERITY_WEIGHTS
 )
+from utils.date_utils import parse_date
 
 
 def compare_exact(ocr_value: Optional[str], user_value: Optional[str]) -> Dict:
@@ -79,8 +80,11 @@ def compare_dates_with_tolerance(
         return {"match": False, "score": 0.0, "days_diff": None}
     
     try:
-        ocr_dt = datetime.strptime(ocr_date, "%Y-%m-%d")
-        user_dt = datetime.strptime(user_date, "%Y-%m-%d")
+        ocr_dt = parse_date(ocr_date)
+        user_dt = parse_date(user_date)
+        
+        if ocr_dt is None or user_dt is None:
+            return {"match": False, "score": 0.0, "days_diff": None}
         
         days_diff = abs((ocr_dt - user_dt).days)
         
