@@ -32,10 +32,6 @@ from utils.config import (
     DOC_HALFTONE_MAX_PASSPORT,
     DOC_HIGH_TEXTURE_THRESHOLD,
     DOC_MIN_SATURATION_FOR_HIGH_TEXTURE,
-    DOC_GLARE_MAX_RATIO,
-    DOC_OBSTRUCTION_SKIN_RATIO_MAX,
-    DOC_OBSTRUCTION_FLAT_CELL_RATIO_MAX,
-    DOC_OBSTRUCTION_FLAT_VARIANCE_THRESHOLD,
 )
 
 
@@ -374,86 +370,6 @@ def _mean_saturation(image: np.ndarray) -> float:
     return float(np.mean(s_channel)) / 255.0
 
 
-def check_document_obstruction(
-    image: np.ndarray,
-    boundary: Optional[Dict] = None,
-) -> Dict:
-    """
-    Check if document region is obstructed by finger (skin), sticker/tape/paper (flat regions), etc.
-    Requires boundary (document bbox). If boundary is None, returns passed=True (cannot assess).
-    Blur is handled by sharpness/clear_and_readable; glare by check_glare(roi=boundary).
-    Returns dict with passed, detail, sub_checks (skin_ratio, flat_cell_ratio).
-    """
-    result = {"passed": True, "detail": None, "sub_checks": {}}
-    if image is None or image.size == 0 or boundary is None:
-        return result
-    bbox = boundary.get("bbox")
-    if not bbox or len(bbox) != 4:
-        return result
-    x, y, w, h = bbox
-    if w < 20 or h < 20:
-        return result
-    roi = image[y : y + h, x : x + w]
-    if roi.size == 0:
-        return result
-
-    # 1) Skin-colored pixels (finger/hand on document)
-    if len(roi.shape) == 3:
-        hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
-        hh, ss, vv = hsv[:, :, 0], hsv[:, :, 1], hsv[:, :, 2]
-        # Skin: H 0-25 or 165-180 (OpenCV H is 0-180), S 25-200, V 40-255 (broad for all skin tones)
-        skin_low = (hh <= 25) & (ss >= 25) & (ss <= 200) & (vv >= 40) & (vv <= 255)
-        skin_high = (hh >= 165) & (ss >= 25) & (ss <= 200) & (vv >= 40) & (vv <= 255)
-        skin_mask = skin_low | skin_high
-        skin_ratio = float(np.sum(skin_mask)) / max(roi.shape[0] * roi.shape[1], 1)
-    else:
-        skin_ratio = 0.0
-    skin_ok = skin_ratio <= DOC_OBSTRUCTION_SKIN_RATIO_MAX
-    result["sub_checks"]["skin_ratio"] = {
-        "passed": skin_ok,
-        "score": round(skin_ratio, 3),
-        "max": DOC_OBSTRUCTION_SKIN_RATIO_MAX,
-    }
-
-    # 2) Flat regions (sticker, tape, paper: very low local variance)
-    gray_roi = _to_gray(roi)
-    if gray_roi is not None and gray_roi.size >= 100:
-        gh, gw = gray_roi.shape
-        grid_rows, grid_cols = 4, 4
-        cell_h, cell_w = max(1, gh // grid_rows), max(1, gw // grid_cols)
-        flat_count = 0
-        total_cells = 0
-        for ri in range(grid_rows):
-            for ci in range(grid_cols):
-                y1, y2 = ri * cell_h, min((ri + 1) * cell_h, gh)
-                x1, x2 = ci * cell_w, min((ci + 1) * cell_w, gw)
-                cell = gray_roi[y1:y2, x1:x2]
-                if cell.size >= 4:
-                    total_cells += 1
-                    if float(np.var(cell)) < DOC_OBSTRUCTION_FLAT_VARIANCE_THRESHOLD:
-                        flat_count += 1
-        flat_ratio = flat_count / max(total_cells, 1)
-        flat_ok = flat_ratio <= DOC_OBSTRUCTION_FLAT_CELL_RATIO_MAX
-        result["sub_checks"]["flat_cell_ratio"] = {
-            "passed": flat_ok,
-            "score": round(flat_ratio, 3),
-            "max": DOC_OBSTRUCTION_FLAT_CELL_RATIO_MAX,
-        }
-    else:
-        flat_ok = True
-        result["sub_checks"]["flat_cell_ratio"] = {"passed": True, "score": 0.0, "max": DOC_OBSTRUCTION_FLAT_CELL_RATIO_MAX}
-
-    result["passed"] = bool(skin_ok and flat_ok)
-    if not result["passed"]:
-        reasons = []
-        if not skin_ok:
-            reasons.append("possible finger/hand on document")
-        if not flat_ok:
-            reasons.append("possible sticker/tape/paper covering")
-        result["detail"] = "Obstruction detected: " + "; ".join(reasons)
-    return result
-
-
 def check_glare(image: np.ndarray, roi: Optional[Tuple[int, int, int, int]] = None) -> Tuple[bool, float]:
     """
     Detect large overexposed/saturated regions (glare). Returns (no_significant_glare, glare_ratio).
@@ -477,5 +393,6 @@ def check_glare(image: np.ndarray, roi: Optional[Tuple[int, int, int, int]] = No
         glare_ratio = max(overexposed, saturated)
     else:
         glare_ratio = overexposed
-    no_glare = glare_ratio <= DOC_GLARE_MAX_RATIO
+    # Fail if more than ~15% of image is glare
+    no_glare = glare_ratio <= 0.15
     return no_glare, round(glare_ratio, 3)

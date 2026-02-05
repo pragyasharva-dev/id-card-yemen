@@ -11,11 +11,9 @@ Uses: document_validation_helpers, ocr_service, face_extractor.
 """
 import numpy as np
 from typing import Dict, Any, Optional
-import re
 
 from utils.config import (
     DOC_VALIDATION_ENABLED,
-    DOC_MIN_OCR_CONFIDENCE,
     DOC_MIN_COVERAGE_RATIO,
     DOC_ASPECT_RATIO_PASSPORT,
     DOC_MIN_RESOLUTION_PX,
@@ -26,7 +24,6 @@ from services.document_validation_helpers import (
     check_not_screenshot_or_copy,
     get_document_boundary,
     check_glare,
-    check_document_obstruction,
 )
 
 
@@ -41,69 +38,23 @@ def _check_resolution(image: np.ndarray) -> Dict[str, Any]:
     }
 
 
-def _has_passport_content(ocr_result: Optional[Dict]) -> bool:
-    """
-    True only if OCR shows passport-specific content (not just any ID number).
-    Passport: MRZ starting with P< or text containing PASSPORT.
-    ID cards (e.g. Yemen 11-digit) must not be accepted as passport.
-    """
-    if not ocr_result:
-        return False
-    texts = ocr_result.get("all_texts") or []
-    for t in texts:
-        stripped = t.strip().upper()
-        # Passport MRZ line 1 starts with P< (e.g. P<YEM...)
-        if stripped.startswith("P<") and len(stripped) >= 20:
-            return True
-        # Explicit passport wording
-        if "PASSPORT" in stripped or "REPUBLIC OF YEMEN PASSPORT" in stripped:
-            return True
-    return False
-
-
-def _is_id_card_not_passport(ocr_result: Optional[Dict]) -> bool:
-    """True if OCR identified this as an ID card (e.g. Yemen ID) rather than a passport."""
-    if not ocr_result:
-        return False
-    id_type = ocr_result.get("id_type")
-    if id_type == "yemen_id":
-        return not _has_passport_content(ocr_result)
-    return False
-
-
-def _check_official_passport(image: np.ndarray, ocr_result: Optional[Dict], face_detected: bool) -> Dict[str, Any]:
-    """Original passport: expect passport-like content from OCR and face on document."""
-    has_content = _has_passport_content(ocr_result)
+def _check_official_passport(image: np.ndarray, face_detected: bool) -> Dict[str, Any]:
+    """Original passport: expect face on document (layout/aspect implies passport)."""
     return {
-        "passed": has_content and face_detected,
-        "score": 1.0 if (has_content and face_detected) else 0.0,
-        "detail": None if (has_content and face_detected) else "Missing passport content (MRZ/photo) or face on document",
+        "passed": face_detected,
+        "score": 1.0 if face_detected else 0.0,
+        "detail": None if face_detected else "Face not detected on document",
     }
 
 
-def _check_document_is_passport_not_id(ocr_result: Optional[Dict]) -> Dict[str, Any]:
-    """Reject when user uploaded an ID card to the passport endpoint."""
-    is_id_card = _is_id_card_not_passport(ocr_result)
-    passed = not is_id_card
-    return {
-        "passed": passed,
-        "score": 1.0 if passed else 0.0,
-        "detail": None if passed else "Document is an ID card, not a passport. Use Yemen ID validation or upload a passport.",
-    }
-
-
-def _check_clarity_passport(image: np.ndarray, ocr_result: Optional[Dict]) -> Dict[str, Any]:
-    """Clear, readable, focused: sharpness + OCR confidence + passport content."""
+def _check_clarity_passport(image: np.ndarray) -> Dict[str, Any]:
+    """Clear, readable, focused: sharpness only (no OCR)."""
     sharp_score, sharp_ok = check_document_sharpness(image)
-    conf = (ocr_result or {}).get("confidence", 0.0)
-    has_content = _has_passport_content(ocr_result)
-    readable = has_content and conf >= DOC_MIN_OCR_CONFIDENCE
-    passed = sharp_ok and readable
     return {
-        "passed": passed,
-        "score": round((sharp_score + (1.0 if readable else 0.0)) / 2.0, 3),
-        "threshold": DOC_MIN_OCR_CONFIDENCE,
-        "detail": None if passed else ("Blurry or unreadable" if not sharp_ok else "OCR confidence too low"),
+        "passed": sharp_ok,
+        "score": round(sharp_score, 3),
+        "threshold": None,
+        "detail": None if sharp_ok else "Blurry or unreadable",
     }
 
 
@@ -129,39 +80,16 @@ def _check_fully_visible_passport(image: np.ndarray) -> Dict[str, Any]:
     }
 
 
-def _check_not_obscured_passport(
-    image: np.ndarray,
-    face_detected: bool,
-    ocr_result: Optional[Dict],
-    boundary: Optional[Dict] = None,
-) -> Dict[str, Any]:
-    """Not covered/obscured: face visible + glare (on document region) + obstruction (finger, sticker, etc.)."""
-    roi = boundary.get("bbox") if boundary else None
-    no_glare, glare_ratio = check_glare(image, roi=roi)
-    obstruction = check_document_obstruction(image, boundary)
-    text_ok = _has_passport_content(ocr_result)
-    passed = face_detected and no_glare and text_ok and obstruction["passed"]
-    detail = None
-    if not passed:
-        if not face_detected:
-            detail = "Face not visible"
-        elif not no_glare:
-            detail = "Glare or reflection on document"
-        elif not text_ok:
-            detail = "Text not readable"
-        elif not obstruction["passed"]:
-            detail = obstruction.get("detail") or "Document may be covered or obstructed"
-        else:
-            detail = "Document covered or obstructed"
-    out = {
+def _check_not_obscured_passport(image: np.ndarray, face_detected: bool) -> Dict[str, Any]:
+    """Not covered/obscured: face visible + glare check."""
+    no_glare, glare_ratio = check_glare(image)
+    passed = face_detected and no_glare
+    return {
         "passed": passed,
         "score": 1.0 if passed else 0.0,
-        "detail": detail,
+        "detail": None if passed else ("Face not visible" if not face_detected else "Glare on document"),
         "glare_ratio": glare_ratio,
     }
-    if obstruction.get("sub_checks"):
-        out["sub_checks"] = obstruction["sub_checks"]
-    return out
 
 
 def _check_no_extra_objects_passport(image: np.ndarray, boundary: Optional[Dict]) -> Dict[str, Any]:
@@ -196,7 +124,6 @@ def validate_passport(image: np.ndarray) -> Dict[str, Any]:
 
     Runs all 7 regulatory checks. Returns result with passed, document_type, checks, error.
     """
-    from services.ocr_service import extract_id_from_image
     from services.face_extractor import get_face_extractor, is_available as insightface_available
 
     result = {
@@ -225,13 +152,6 @@ def validate_passport(image: np.ndarray) -> Dict[str, Any]:
         result["error"] = res.get("detail", "Image too small")
         return result
 
-    # Dependencies: OCR and face
-    ocr_result = None
-    try:
-        ocr_result = extract_id_from_image(image)
-    except Exception:
-        pass
-
     face_detected = False
     if insightface_available():
         try:
@@ -242,10 +162,10 @@ def validate_passport(image: np.ndarray) -> Dict[str, Any]:
             pass
 
     # 1. Official document (passport)
-    result["checks"]["official_document"] = _check_official_passport(image, ocr_result, face_detected)
+    result["checks"]["official_document"] = _check_official_passport(image, face_detected)
 
-    # 1b. Reject ID cards submitted to passport endpoint
-    result["checks"]["document_is_passport"] = _check_document_is_passport_not_id(ocr_result)
+    # 1b. document_is_passport (no OCR - always pass; cannot distinguish ID card from passport without OCR)
+    result["checks"]["document_is_passport"] = {"passed": True, "score": 1.0, "detail": None}
 
     # 2. Not screenshot/photocopy
     screenshot_check = check_not_screenshot_or_copy(image, for_passport=True)
@@ -259,7 +179,7 @@ def validate_passport(image: np.ndarray) -> Dict[str, Any]:
     }
 
     # 3. Clear and readable
-    result["checks"]["clear_and_readable"] = _check_clarity_passport(image, ocr_result)
+    result["checks"]["clear_and_readable"] = _check_clarity_passport(image)
 
     # 4. Fully visible
     full_vis = _check_fully_visible_passport(image)
@@ -267,9 +187,7 @@ def validate_passport(image: np.ndarray) -> Dict[str, Any]:
     boundary = full_vis.get("boundary")
 
     # 5. Not obscured
-    result["checks"]["not_obscured"] = _check_not_obscured_passport(
-        image, face_detected, ocr_result, boundary=boundary
-    )
+    result["checks"]["not_obscured"] = _check_not_obscured_passport(image, face_detected)
 
     # 6. No extra objects
     result["checks"]["no_extra_objects"] = _check_no_extra_objects_passport(image, boundary)

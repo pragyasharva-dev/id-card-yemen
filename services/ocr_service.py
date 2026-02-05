@@ -116,6 +116,20 @@ def text_matches_language(text: str, ocr_lang: str) -> bool:
     return True
 
 
+def _normalize_digits(text: str) -> str:
+    """Convert Arabic-Indic (٠-٩) and Eastern Arabic (۰-۹) digits to Western (0-9)."""
+    result = []
+    for c in text:
+        code = ord(c)
+        if 0x0660 <= code <= 0x0669:  # Arabic-Indic
+            result.append(chr(0x30 + (code - 0x0660)))
+        elif 0x06F0 <= code <= 0x06F9:  # Eastern Arabic
+            result.append(chr(0x30 + (code - 0x06F0)))
+        else:
+            result.append(c)
+    return "".join(result)
+
+
 def detect_char_language(char: str) -> Optional[str]:
     """
     Detect the language of a single character based on Unicode range.
@@ -396,6 +410,7 @@ class OCRService:
         for item in text_results:
             text = item['text']
             ocr_score = float(item.get('score', 0.0))  # PaddleOCR recognition score
+            text = _normalize_digits(text)
             cleaned = re.sub(r'[\s\-\.]', '', text.upper())
 
             for id_type, pattern_info in ID_PATTERNS.items():
@@ -415,6 +430,7 @@ class OCRService:
             for item in text_results:
                 text = item['text']
                 ocr_score = float(item.get('score', 0.0))
+                text = _normalize_digits(text)
                 cleaned = re.sub(r'[^\d]', '', text)
                 if 8 <= len(cleaned) <= 15:
                     candidates.append({

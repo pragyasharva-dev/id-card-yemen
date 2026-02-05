@@ -42,6 +42,7 @@ from models.schemas import (
     ExtractIDRequest, ExtractIDResponse,
     CompareFacesRequest, CompareFacesResponse,
     BatchProcessRequest, BatchProcessResponse,
+    VerifyRequest, VerifyResponse,
     HealthResponse, OCRResult, FaceMatchResult, LivenessResult,
     TranslateRequest, TranslateResponse, TranslatedText,
     ImageQualityResponse,
@@ -50,9 +51,7 @@ from models.schemas import (
     SaveIDCardRequest, SavePassportRequest,
     IDCardRecord, PassportRecord,
     IDCardListResponse, PassportListResponse,
-    SaveRecordResponse, ExportResponse
-    HealthResponse, OCRResult, FaceMatchResult,
-    TranslateRequest, TranslateResponse, TranslatedText,
+    SaveRecordResponse, ExportResponse,
 )
 from services.ocr_service import extract_id_from_image, get_ocr_service
 from services.face_recognition import verify_identity, compare_faces, is_ready as face_ready
@@ -512,7 +511,6 @@ async def verify_identity_endpoint(
             error=str(e)
         )
 
- sujata
 
 @router.post("/verify-json", response_model=VerifyResponse)
 async def verify_identity_json(request: VerifyRequest):
@@ -613,7 +611,6 @@ async def verify_identity_json(request: VerifyRequest):
             error=str(e)
         )
 
-main
 
 @router.post("/extract-id", response_model=ExtractIDResponse)
 async def extract_id_endpoint(

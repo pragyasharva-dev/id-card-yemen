@@ -42,11 +42,8 @@ All thresholds below are defined in **`utils/config.py`** unless noted as hardco
 | `DOC_MIN_SATURATION_FOR_HIGH_TEXTURE` | 0.06 | Both | If texture high, mean saturation must be **≥** this (reject very flat prints). |
 | **Readability** ||||
 | `DOC_MIN_OCR_CONFIDENCE` | 0.55 | Both | OCR confidence for required text must be **≥** this. |
-| **Glare / obstruction** ||||
-| `DOC_GLARE_MAX_RATIO` | 0.15 (15%) | Both | Fraction of (document ROI or full) pixels that may be overexposed/saturated; above = fail. |
-| `DOC_OBSTRUCTION_SKIN_RATIO_MAX` | 0.22 | Both | Max fraction of document pixels that may be skin-colored (finger/hand); above = fail. |
-| `DOC_OBSTRUCTION_FLAT_CELL_RATIO_MAX` | 0.25 | Both | Max fraction of document grid cells allowed with very low variance (sticker/tape/paper). |
-| `DOC_OBSTRUCTION_FLAT_VARIANCE_THRESHOLD` | 80 | Both | Cell variance below this = flat (possible sticker/tape/paper). |
+| **Glare** (in `document_validation_helpers.py`) ||||
+| (hardcoded) | 0.15 (15%) | Both | Fraction of pixels that may be overexposed/saturated; above = fail. |
 
 ---
 
@@ -131,17 +128,13 @@ All thresholds below are defined in **`utils/config.py`** unless noted as hardco
 
 ---
 
-### 2.7 Not obscured (covered/obstructed)
+### 2.7 Not obscured
 
-- **Methods:** `check_glare(image, roi=document_bbox)` + `check_document_obstruction(image, boundary)` + face + OCR content.
+- **Method:** `check_glare(image)` + face + OCR content.
 - **Terms:**
-  - **Face** detected on document.
-  - **Glare:** When document boundary is available, glare is measured on the document ROI only; otherwise full image. Fraction of pixels with value ≥ 250 must be **≤** `DOC_GLARE_MAX_RATIO` (0.15).
-  - **Obstruction:** When boundary is available, `check_document_obstruction` runs:
-    - **Skin ratio:** Fraction of document pixels in skin-like HSV range (finger/hand) must be **≤** `DOC_OBSTRUCTION_SKIN_RATIO_MAX` (0.22).
-    - **Flat cells:** Document is divided into a 4×4 grid; fraction of cells with variance **<** `DOC_OBSTRUCTION_FLAT_VARIANCE_THRESHOLD` (80) must be **≤** `DOC_OBSTRUCTION_FLAT_CELL_RATIO_MAX` (0.25) (sticker/tape/paper).
-  - **Required text** present (Yemen ID or passport content).
-- **Blur** is handled by sharpness and clear_and_readable checks, not here.
+  - Face detected on document.
+  - **Glare:** Fraction of pixels with value ≥ 250 (overexposed/saturated) must be **≤ 0.15** (15%) (hardcoded in `check_glare`).
+  - Required text present (Yemen ID or passport content).
 
 ---
 

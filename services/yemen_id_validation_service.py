@@ -22,7 +22,6 @@ from typing import Dict, Any, Optional
 
 from utils.config import (
     DOC_VALIDATION_ENABLED,
-    DOC_MIN_OCR_CONFIDENCE,
     DOC_MIN_COVERAGE_RATIO,
     DOC_MIN_RESOLUTION_PX,
     DOC_ASPECT_RATIO_YEMEN_ID,
@@ -34,7 +33,6 @@ from services.document_validation_helpers import (
     check_not_screenshot_or_copy,
     get_document_boundary,
     check_glare,
-    check_document_obstruction,
 )
 
 
@@ -50,28 +48,23 @@ def _check_resolution(image: np.ndarray) -> Dict[str, Any]:
     }
 
 
-def _check_official_yemen_id(image: np.ndarray, ocr_result: Optional[Dict], face_detected: bool) -> Dict[str, Any]:
-    """Official Yemen ID: expect 11-digit ID from OCR and face on document."""
-    has_id = bool(ocr_result and ocr_result.get("extracted_id") and ocr_result.get("id_type") == "yemen_id")
+def _check_official_yemen_id(image: np.ndarray, face_detected: bool) -> Dict[str, Any]:
+    """Official Yemen ID: expect face on document (layout/aspect implies ID card)."""
     return {
-        "passed": has_id and face_detected,
-        "score": 1.0 if (has_id and face_detected) else 0.0,
-        "detail": None if (has_id and face_detected) else "Missing 11-digit Yemen ID or face on document",
+        "passed": face_detected,
+        "score": 1.0 if face_detected else 0.0,
+        "detail": None if face_detected else "Face not detected on document",
     }
 
 
-def _check_clarity_yemen_id(image: np.ndarray, ocr_result: Optional[Dict]) -> Dict[str, Any]:
-    """Clear, readable, focused: sharpness + OCR confidence + ID present."""
+def _check_clarity_yemen_id(image: np.ndarray) -> Dict[str, Any]:
+    """Clear, readable, focused: sharpness only (no OCR)."""
     sharp_score, sharp_ok = check_document_sharpness(image)
-    conf = (ocr_result or {}).get("confidence", 0.0)
-    has_id = bool(ocr_result and ocr_result.get("extracted_id"))
-    readable = has_id and conf >= DOC_MIN_OCR_CONFIDENCE
-    passed = sharp_ok and readable
     return {
-        "passed": passed,
-        "score": round((sharp_score + (1.0 if readable else 0.0)) / 2.0, 3),
-        "threshold": DOC_MIN_OCR_CONFIDENCE,
-        "detail": None if passed else ("Blurry or unreadable" if not sharp_ok else "OCR confidence too low"),
+        "passed": sharp_ok,
+        "score": round(sharp_score, 3),
+        "threshold": None,
+        "detail": None if sharp_ok else "Blurry or unreadable",
     }
 
 
@@ -103,39 +96,16 @@ def _check_fully_visible_yemen_id(
     return out
 
 
-def _check_not_obscured_yemen_id(
-    image: np.ndarray,
-    face_detected: bool,
-    ocr_result: Optional[Dict],
-    boundary: Optional[Dict] = None,
-) -> Dict[str, Any]:
-    """Not covered/obscured: face visible + glare (on document region) + obstruction (finger, sticker, etc.)."""
-    roi = boundary.get("bbox") if boundary else None
-    no_glare, glare_ratio = check_glare(image, roi=roi)
-    obstruction = check_document_obstruction(image, boundary)
-    text_ok = bool(ocr_result and ocr_result.get("extracted_id"))
-    passed = face_detected and no_glare and text_ok and obstruction["passed"]
-    detail = None
-    if not passed:
-        if not face_detected:
-            detail = "Face not visible"
-        elif not no_glare:
-            detail = "Glare or reflection on document"
-        elif not text_ok:
-            detail = "Text not readable"
-        elif not obstruction["passed"]:
-            detail = obstruction.get("detail") or "Document may be covered or obstructed"
-        else:
-            detail = "Document covered or obstructed"
-    out = {
+def _check_not_obscured_yemen_id(image: np.ndarray, face_detected: bool) -> Dict[str, Any]:
+    """Not covered/obscured: face visible + glare check."""
+    no_glare, glare_ratio = check_glare(image)
+    passed = face_detected and no_glare
+    return {
         "passed": passed,
         "score": 1.0 if passed else 0.0,
-        "detail": detail,
+        "detail": None if passed else ("Face not visible" if not face_detected else "Glare on document"),
         "glare_ratio": glare_ratio,
     }
-    if obstruction.get("sub_checks"):
-        out["sub_checks"] = obstruction["sub_checks"]
-    return out
 
 
 def _check_no_extra_objects_yemen_id(
@@ -211,7 +181,6 @@ def validate_yemen_id(
     Front is required; back is required for full validation. Both sides must pass
     original/genuine checks; front must also have face and 11-digit ID.
     """
-    from services.ocr_service import extract_id_from_image
     from services.face_extractor import get_face_extractor, is_available as insightface_available
 
     result = {
@@ -246,12 +215,6 @@ def validate_yemen_id(
         result["error"] = "Front: " + (res_front.get("detail") or "Image too small")
         return result
 
-    ocr_result = None
-    try:
-        ocr_result = extract_id_from_image(front_image)
-    except Exception:
-        pass
-
     face_detected = False
     if insightface_available():
         try:
@@ -261,7 +224,7 @@ def validate_yemen_id(
         except Exception:
             pass
 
-    result["checks"]["official_document"] = _check_official_yemen_id(front_image, ocr_result, face_detected)
+    result["checks"]["official_document"] = _check_official_yemen_id(front_image, face_detected)
 
     screenshot_check = check_not_screenshot_or_copy(front_image)
     result["checks"]["not_screenshot_or_copy"] = {
@@ -273,13 +236,11 @@ def validate_yemen_id(
         "sub_checks": screenshot_check.get("checks", {}),
     }
 
-    result["checks"]["clear_and_readable"] = _check_clarity_yemen_id(front_image, ocr_result)
+    result["checks"]["clear_and_readable"] = _check_clarity_yemen_id(front_image)
     full_vis = _check_fully_visible_yemen_id(front_image)
     result["checks"]["fully_visible"] = {k: v for k, v in full_vis.items()}
     boundary = get_document_boundary(front_image, DOC_ASPECT_RATIO_YEMEN_ID)
-    result["checks"]["not_obscured"] = _check_not_obscured_yemen_id(
-        front_image, face_detected, ocr_result, boundary=boundary
-    )
+    result["checks"]["not_obscured"] = _check_not_obscured_yemen_id(front_image, face_detected)
     result["checks"]["no_extra_objects"] = _check_no_extra_objects_yemen_id(front_image, boundary)
     result["checks"]["integrity"] = _check_integrity_yemen_id(front_image, face_detected)
 
