@@ -9,7 +9,8 @@
 **Name**: e-KYC Verification System
 **Goal**: Verify customer identity by comparing ID card images with selfies.
 **Core Features**:
-- **ID Extraction**: OCR (PaddleOCR) + Pattern Matching for Yemen/Indian IDs.
+- **ID Layout**: YOLO v8 for field detection (Front/Back models).
+- **ID Extraction**: PaddleOCR on cropped fields.
 - **Face Verification**: InsightFace (Buffalo_L) for face comparison and liveness detection.
 - **Translation**: Hybrid Arabic-to-English name translation.
 - **Validation**: Configurable strictness (Low/Medium/High severity fields).
@@ -61,6 +62,7 @@ graph TD
         - `health.py`, `face.py`, `translation.py`.
     - `test_routes.py`: Endpoints for testing and debugging.
 - **`services/`**: Core business logic.
+    - `layout_service.py`: YOLO-based field detection (Reduces need for NER).
     - `ocr_service.py`: Text extraction & ID pattern matching.
     - `face_recognition.py`: Face detection & comparison.
     - `id_database.py`: **NEW** - ID card retrieval logic for verification.
@@ -71,6 +73,7 @@ graph TD
     - `id_card_parser.py`: Structured data parsing from OCR text.
 - **`models/`**: Pydantic schemas (`schemas.py`) and validators.
 - **`utils/`**: Shared utilities.
+    - `date_utils.py`: **Core** - Centralized date parsing/formatting (YYYY-MM-DD).
     - `config.py`: **CRITICAL** - contains severity thresholds and ID patterns.
     - `ocr_utils.py`: Preprocessing and text normalization.
 - **`data/`**: Local storage for images and SQLite databases.
@@ -98,6 +101,11 @@ Fields have severity levels determining verification outcome:
 - Routes are split by domain in `api/routes/`.
 - `main.py` aggregates them via a single router.
 - **Verification Flow**: `/verify` endpoint performs OCR, parses data, runs face comparison (with optional liveness), and auto-saves results to the database.
+
+### E. Date Normalization (`utils/date_utils.py`)
+- **Single Source of Truth**: All dates are forced to `YYYY-MM-DD`.
+- **Robust Parsing**: Handles `DD-MM-YYYY`, `YYYY/MM/DD`, etc.
+- **Integrated Services**: Used by `id_card_parser`, `passport_mrz_parser`, and `expiry_date_service`.
 
 ## 5. Agent Guidelines
 - **Running Tests**: Check `docs/TESTING_GUIDE.md`. Preferred script: `python tests/test_verify_enhanced.py`.
