@@ -15,6 +15,8 @@ from typing import Dict, List, Optional, Tuple
 from datetime import datetime
 import re
 
+from utils.date_utils import format_date
+
 
 def calculate_check_digit(data: str) -> str:
     """
@@ -93,7 +95,7 @@ def parse_date(date_str: str) -> Optional[str]:
         
         # Validate date
         date_obj = datetime(yyyy, mm, dd)
-        return date_obj.strftime("%Y-%m-%d")
+        return format_date(date_obj)
         
     except (ValueError, IndexError):
         return None
