@@ -34,6 +34,7 @@ from utils.config import (
     LIVENESS_SIZE_THRESHOLD,
     LIVENESS_THRESHOLD,
 )
+from utils.exceptions import ServiceError
 
 
 # Minimum image size for selfies
@@ -325,27 +326,18 @@ def detect_spoof(image: np.ndarray) -> Dict:
     
     # Validate image
     if image is None or image.size == 0:
-        result["error"] = "Invalid image provided"
-        return result
+        raise ServiceError("Invalid image provided", code="INVALID_IMAGE")
     
     # Get image dimensions
     h, w = image.shape[:2]
     
     # Minimum size check - reject tiny/cropped images
     if min(h, w) < MIN_SELFIE_SIZE:
-        result["is_live"] = False
-        result["confidence"] = 0.0
-        result["spoof_probability"] = 1.0
-        result["checks"] = {
-            "image_size": {
-                "passed": False,
-                "score": float(min(h, w)),
-                "threshold": float(MIN_SELFIE_SIZE),
-                "reason": "image_too_small"
-            }
-        }
-        result["error"] = "Image too small - minimum 160px required"
-        return result
+        raise ServiceError(
+            "Image too small - minimum 160px required",
+            code="IMAGE_TOO_SMALL",
+            details={"min_dimension": int(min(h, w)), "required": MIN_SELFIE_SIZE}
+        )
     
     try:
         # Convert to grayscale for analysis
@@ -496,10 +488,12 @@ def detect_spoof(image: np.ndarray) -> Dict:
         result["spoof_probability"] = float(round(1.0 - confidence, 3))
         result["checks"] = checks
         
+        return result
+        
+    except ServiceError:
+        raise  # Re-raise custom exceptions
     except Exception as e:
-        result["error"] = f"Liveness detection error: {str(e)}"
-    
-    return result
+        raise ServiceError(f"Liveness detection error: {str(e)}", code="LIVENESS_ERROR")
 
 
 def is_liveness_enabled() -> bool:
