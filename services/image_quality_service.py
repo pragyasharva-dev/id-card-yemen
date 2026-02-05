@@ -25,6 +25,7 @@ from utils.config import (
     FACE_QUALITY_MIN_CONFIDENCE,
     FACE_QUALITY_MIN_FACE_RATIO
 )
+from utils.exceptions import ServiceError, ModelLoadError
 
 
 def _analyze_landmarks(face, image: np.ndarray = None) -> Dict:
@@ -562,13 +563,11 @@ def _check_face_quality(image: np.ndarray, image_type: str = "unknown") -> Dict:
     
     # Check if InsightFace is available
     if not insightface_available():
-        result["error"] = "Face detection service unavailable"
-        return result
+        raise ModelLoadError("InsightFace", reason="Not available")
     
     # Validate image
     if image is None or image.size == 0:
-        result["error"] = "Invalid image provided"
-        return result
+        raise ServiceError("Invalid image provided", code="INVALID_IMAGE")
     
     try:
         # Get face extractor
@@ -578,11 +577,12 @@ def _check_face_quality(image: np.ndarray, image_type: str = "unknown") -> Dict:
         faces = extractor.detect_faces(image)
         
         if not faces or len(faces) == 0:
-            if image_type == "id_document":
-                result["error"] = "No face detected on ID card. Please upload a clear photo of your ID."
-            else:
-                result["error"] = "No face detected in selfie. Please take a clear photo showing your face."
-            return result
+            error_msg = (
+                "No face detected on ID card. Please upload a clear photo of your ID."
+                if image_type == "id_document"
+                else "No face detected in selfie. Please take a clear photo showing your face."
+            )
+            raise ServiceError(error_msg, code="FACE_NOT_DETECTED")
         
         result["face_detected"] = True
         
@@ -662,9 +662,10 @@ def _check_face_quality(image: np.ndarray, image_type: str = "unknown") -> Dict:
         
         return result
         
+    except ServiceError:
+        raise  # Re-raise custom exceptions
     except Exception as e:
-        result["error"] = f"Quality check failed: {str(e)}"
-        return result
+        raise ServiceError(f"Quality check failed: {str(e)}", code="QUALITY_CHECK_FAILED")
 
 
 def is_quality_check_enabled() -> bool:
