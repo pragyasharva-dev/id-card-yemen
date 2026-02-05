@@ -598,6 +598,7 @@ class SelfieVerificationResponse(BaseModel):
 
 
 # =====================================================
+<<<<<<< HEAD
 # DOCUMENT VALIDATION (Yemen ID & Passport)
 # =====================================================
 
@@ -623,4 +624,162 @@ class DocumentValidationResult(BaseModel):
         description="Yemen ID only: per-check results for back image (not_screenshot_or_copy, sharpness, fully_visible, no_extra_objects)"
     )
     error: Optional[str] = Field(None, description="Error message if validation failed")
+
+# EXPIRY DATE CHECK SCHEMAS
+# =====================================================
+
+class ExpiryCheckRequest(BaseModel):
+    """Request model for checking document expiry."""
+    expiry_date: str = Field(
+        ...,
+        description="Document expiry date (YYYY-MM-DD or similar format)"
+    )
+    expiring_soon_days: int = Field(
+        90,
+        description="Number of days before expiry to trigger 'expiring_soon' status",
+        ge=1,
+        le=365
+    )
+    grace_period_days: int = Field(
+        30,
+        description="Number of days after expiry for grace period",
+        ge=0,
+        le=180
+    )
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "expiry_date": "2025-06-15",
+                "expiring_soon_days": 90,
+                "grace_period_days": 30
+            }
+        }
+
+
+class ExpiryCheckResponse(BaseModel):
+    """Response model for document expiry check."""
+    is_expired: bool = Field(
+        ...,
+        description="Whether the document is expired"
+    )
+    status: Literal["valid", "expiring_soon", "expired", "unknown"] = Field(
+        ...,
+        description="Document expiry status"
+    )
+    expiry_date: Optional[str] = Field(
+        None,
+        description="Parsed expiry date in YYYY-MM-DD format"
+    )
+    days_until_expiry: Optional[int] = Field(
+        None,
+        description="Days until expiry (negative if expired)"
+    )
+    days_since_expiry: Optional[int] = Field(
+        None,
+        description="Days since expiry (only set if expired)"
+    )
+    is_within_grace_period: bool = Field(
+        False,
+        description="Whether within grace period after expiry"
+    )
+    message: str = Field(
+        ...,
+        description="Human-readable expiry status message"
+    )
+    severity: Literal["critical", "warning", "info", "none"] = Field(
+        "none",
+        description="Severity level for UI display"
+    )
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "is_expired": False,
+                "status": "expiring_soon",
+                "expiry_date": "2026-03-15",
+                "days_until_expiry": 38,
+                "days_since_expiry": None,
+                "is_within_grace_period": False,
+                "message": "Document will expire in 38 day(s)",
+                "severity": "info"
+            }
+        }
+
+
+class DocumentDateValidationRequest(BaseModel):
+    """Request model for comprehensive document date validation."""
+    issuance_date: Optional[str] = Field(
+        None,
+        description="Document issuance date"
+    )
+    expiry_date: Optional[str] = Field(
+        None,
+        description="Document expiry date"
+    )
+    date_of_birth: Optional[str] = Field(
+        None,
+        description="Holder's date of birth"
+    )
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "issuance_date": "2020-01-15",
+                "expiry_date": "2030-01-15",
+                "date_of_birth": "1990-05-20"
+            }
+        }
+
+
+class DocumentDateValidationResponse(BaseModel):
+    """Response model for comprehensive document date validation."""
+    is_valid: bool = Field(
+        ...,
+        description="Overall validity of document dates"
+    )
+    message: str = Field(
+        ...,
+        description="Summary message"
+    )
+    expiry_check: Optional[ExpiryCheckResponse] = Field(
+        None,
+        description="Detailed expiry check results"
+    )
+    date_sequence_valid: bool = Field(
+        True,
+        description="Whether date sequence is valid (DOB < Issuance < Expiry)"
+    )
+    validity_period_days: Optional[int] = Field(
+        None,
+        description="Document validity period in days"
+    )
+    validity_period_years: Optional[float] = Field(
+        None,
+        description="Document validity period in years"
+    )
+    warnings: List[str] = Field(
+        default_factory=list,
+        description="List of warning messages"
+    )
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "is_valid": True,
+                "message": "All document dates are valid",
+                "expiry_check": {
+                    "is_expired": False,
+                    "status": "valid",
+                    "expiry_date": "2030-01-15",
+                    "days_until_expiry": 1439,
+                    "message": "Document is valid for 1439 more day(s)"
+                },
+                "date_sequence_valid": True,
+                "validity_period_days": 3652,
+                "validity_period_years": 10.0,
+                "warnings": []
+            }
+        }
+9e4b74fc983bb56addf0508742119ae06c547b1c
 

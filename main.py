@@ -110,9 +110,9 @@ app.add_middleware(
 )
 
 # Include API routes
-from api.routes import router
+from api.routes import router as production_router
 from api.test_routes import test_router
-app.include_router(router, tags=["e-KYC"])
+app.include_router(production_router)
 app.include_router(test_router, tags=["Testing"])
 
 # Serve static files
