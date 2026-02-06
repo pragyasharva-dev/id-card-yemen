@@ -325,7 +325,7 @@ class OCRService:
         
         # Use .ocr() instead of .predict() to get consistent behavior
         # parse_paddleocr_result handles the format differences
-        result = ocr.ocr(image, cls=False)
+        result = ocr.ocr(image)
         
         # Use shared parsing logic
         parsed_results = parse_paddleocr_result(result)
