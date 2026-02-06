@@ -2,7 +2,7 @@
 Field Comparison Service for OCR-to-Form Data Matching
 
 Compares OCR-extracted data with manually entered form data using
-configurable severity levels and field-specific thresholds per SOW requirements.
+configurable severity levels and field-specific thresholds per requirements.
 
 Features:
 - Exact matching for critical fields (ID number, DOB, gender)
@@ -291,7 +291,7 @@ def compare_field(
             result["fraud_reason"] = gender_result.get("fraud_reason")
             result["expected_gender"] = gender_result.get("expected_gender")
         elif field_name == "date_of_birth":
-            # DOB: EXACT match ONLY - NO tolerance (high severity per SOW)
+            # DOB: EXACT match ONLY - NO tolerance (high severity)
             exact_result = compare_exact(ocr_value, user_value)
             result["match"] = exact_result["match"]
             result["score"] = exact_result["score"]
@@ -502,7 +502,7 @@ def validate_form_vs_ocr(
     overall_score = weighted_score
     
     # ========================================
-    # SOW-COMPLIANT DECISION LOGIC
+    # COMPLIANT DECISION LOGIC
     # ========================================
     # Decisions are made PURELY based on field-level statuses
     # NOT on overall score thresholds
