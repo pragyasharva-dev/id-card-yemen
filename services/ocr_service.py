@@ -45,16 +45,15 @@ from utils.ocr_utils import add_ocr_padding, parse_paddleocr_result
 
 
 # Supported languages with their Unicode ranges for detection
+# Supported languages with their Unicode ranges for detection
 SUPPORTED_LANGUAGES = {
     'en': {
         'name': 'English',
-        'flag': '🇬🇧',
         'ranges': [(0x0041, 0x005A), (0x0061, 0x007A)],  # A-Z, a-z
         'require_native_script': False  # English doesn't require validation
     },
     'ar': {
         'name': 'Arabic', 
-        'flag': '🇾🇪',
         'ranges': [(0x0600, 0x06FF), (0x0750, 0x077F)],  # Arabic, Arabic Supplement
         'require_native_script': True  # Must have Arabic characters
     }
@@ -225,7 +224,7 @@ class OCRService:
         try:
             OCRService._ocr_models[lang_code] = PaddleOCR(
                 lang=lang_code,
-                use_angle_cls=False,
+                use_textline_orientation=False,
                 use_doc_orientation_classify=False,
                 use_doc_unwarping=False
             )

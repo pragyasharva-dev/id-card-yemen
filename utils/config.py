@@ -127,6 +127,104 @@ DOC_MIN_SATURATION_FOR_HIGH_TEXTURE = 0.06  # Reject only very flat prints; orig
 
 
 
+
 # Place of Birth Validation Thresholds
 PLACE_OF_BIRTH_PASS_THRESHOLD = 0.8
 PLACE_OF_BIRTH_MANUAL_THRESHOLD = 0.4
+
+# Date Comparison Tolerance (Days)
+DATE_TOLERANCE_DAYS = 1
+
+# Field Validation Configuration (SOW 4.6 / 6.0)
+SEVERITY_WEIGHTS = {
+    "high": 1.0,
+    "medium": 0.5,
+    "low": 0.2
+}
+
+FIELD_CONFIGURATIONS = {
+    "id_number": {
+        "severity": "high",
+        "matching_type": "exact",
+        "pass_threshold": 1.0,
+        "manual_threshold": 1.0,
+        "enabled": True
+    },
+    "passport_number": {
+        "severity": "high",
+        "matching_type": "exact",
+        "pass_threshold": 1.0,
+        "manual_threshold": 1.0,
+        "enabled": True
+    },
+    "date_of_birth": {
+        "severity": "high",
+        "matching_type": "exact",
+        "pass_threshold": 1.0,
+        "manual_threshold": 1.0,
+        "enabled": True
+    },
+    "name_english": {
+        "severity": "high",
+        "matching_type": "fuzzy",
+        "pass_threshold": 0.85,
+        "manual_threshold": 0.60,
+        "enabled": True
+    },
+    "name_arabic": {
+        "severity": "high",
+        "matching_type": "fuzzy",
+        "pass_threshold": 0.85,
+        "manual_threshold": 0.60,
+        "enabled": True
+    },
+    "issuance_date": {
+        "severity": "medium",
+        "matching_type": "exact",  # with tolerance logic in code
+        "pass_threshold": 1.0,
+        "manual_threshold": 0.5,
+        "enabled": True
+    },
+    "expiry_date": {
+        "severity": "medium",
+        "matching_type": "exact",  # with tolerance logic in code
+        "pass_threshold": 1.0,
+        "manual_threshold": 0.5,
+        "enabled": True
+    },
+    "gender": {
+        "severity": "medium",
+        "matching_type": "exact",
+        "pass_threshold": 1.0,
+        "manual_threshold": 1.0,
+        "enabled": True
+    },
+    "place_of_birth": {
+        "severity": "medium",
+        "matching_type": "token",
+        "pass_threshold": PLACE_OF_BIRTH_PASS_THRESHOLD,
+        "manual_threshold": PLACE_OF_BIRTH_MANUAL_THRESHOLD,
+        "enabled": True
+    },
+    "nationality": {
+        "severity": "low",
+        "matching_type": "fuzzy",
+        "pass_threshold": 0.80,
+        "manual_threshold": 0.50,
+        "enabled": True
+    },
+    "profession": {
+        "severity": "low",
+        "matching_type": "fuzzy",
+        "pass_threshold": 0.75,
+        "manual_threshold": 0.40,
+        "enabled": True
+    },
+    "issuance_place": {
+        "severity": "low",
+        "matching_type": "fuzzy",
+        "pass_threshold": 0.75,
+        "manual_threshold": 0.40,
+        "enabled": True
+    }
+}
