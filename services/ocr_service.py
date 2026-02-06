@@ -49,11 +49,13 @@ from utils.ocr_utils import add_ocr_padding, parse_paddleocr_result
 SUPPORTED_LANGUAGES = {
     'en': {
         'name': 'English',
+        'flag': '🇺🇸',
         'ranges': [(0x0041, 0x005A), (0x0061, 0x007A)],  # A-Z, a-z
         'require_native_script': False  # English doesn't require validation
     },
     'ar': {
         'name': 'Arabic', 
+        'flag': '🇾🇪',
         'ranges': [(0x0600, 0x06FF), (0x0750, 0x077F)],  # Arabic, Arabic Supplement
         'require_native_script': True  # Must have Arabic characters
     }
