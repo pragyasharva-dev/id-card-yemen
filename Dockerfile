@@ -41,7 +41,11 @@ FROM base AS deps
 # Copy dependency file
 COPY pyproject.toml .
 # Install dependencies directly from pyproject.toml
-RUN pip install --no-cache-dir .
+# Install build tools needed for InsightFace compilation, then clean up
+RUN apt-get update && apt-get install -y --no-install-recommends build-essential python3-dev && \
+    pip install --no-cache-dir . && \
+    apt-get purge -y --auto-remove build-essential python3-dev && \
+    rm -rf /var/lib/apt/lists/*
 
 # =============================================================================
 # Production Stage
