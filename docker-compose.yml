@@ -1,0 +1,27 @@
+version: '3.8'
+
+services:
+  ekyc-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ekyc-api:latest
+    container_name: ekyc-api
+    ports:
+      - "8000:8000"
+    environment:
+      # Disable image persistence for production (SOW 4.8)
+      - PERSIST_IMAGES=false
+      # Model directories (already set in Dockerfile, but can override)
+      - MODELS_DIR=/app/models
+    volumes:
+      # Mount local models directory (for development/testing)
+      # In production, models should be baked into the image
+      - ./models:/app/models:ro
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:8000/health" ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    restart: unless-stopped
