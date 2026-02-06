@@ -363,15 +363,6 @@ class OCRService:
                     'score': score,
                     'ocr_lang': lang
                 })
-            for text, score in zip(texts, scores):
-                text = text.strip()
-                if text:
-                    if text_matches_language(text, lang):
-                        extracted.append({
-                            'text': text,
-                            'score': float(score) if score is not None else 0.0,
-                            'ocr_lang': lang
-                        })
         
         return extracted
     
