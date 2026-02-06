@@ -1,6 +1,5 @@
-"""
-Configuration settings for the e-KYC system.
-"""
+"""Configuration settings for the e-KYC system."""
+import os
 from pathlib import Path
 
 # Base directories
@@ -9,6 +8,16 @@ DATA_DIR = BASE_DIR / "data"
 ID_CARDS_DIR = DATA_DIR / "id_cards"
 SELFIES_DIR = DATA_DIR / "selfies"
 PROCESSED_DIR = DATA_DIR / "processed"
+
+# Models directory for offline deployment (SOW 11)
+# Set MODELS_DIR environment variable to override
+MODELS_DIR = Path(os.environ.get("MODELS_DIR", str(BASE_DIR / "models")))
+PADDLEOCR_MODEL_DIR = MODELS_DIR / "paddleocr"
+INSIGHTFACE_MODEL_DIR = MODELS_DIR / "insightface"
+
+# Persistence settings (SOW 4.8 - No Persistence mode)
+# Set to False to disable saving images to disk/database
+PERSIST_IMAGES = os.environ.get("PERSIST_IMAGES", "true").lower() == "true"
 
 # Ensure directories exist
 for dir_path in [ID_CARDS_DIR, SELFIES_DIR, PROCESSED_DIR]:
@@ -117,3 +126,7 @@ DOC_HIGH_TEXTURE_THRESHOLD = 0.92
 DOC_MIN_SATURATION_FOR_HIGH_TEXTURE = 0.06  # Reject only very flat prints; originals can be muted (lighting/passport design)
 
 
+
+# Place of Birth Validation Thresholds
+PLACE_OF_BIRTH_PASS_THRESHOLD = 0.8
+PLACE_OF_BIRTH_MANUAL_THRESHOLD = 0.4
