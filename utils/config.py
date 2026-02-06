@@ -9,15 +9,23 @@ ID_CARDS_DIR = DATA_DIR / "id_cards"
 SELFIES_DIR = DATA_DIR / "selfies"
 PROCESSED_DIR = DATA_DIR / "processed"
 
-# Models directory for offline deployment (SOW 11)
+# Models directory for offline deployment
 # Set MODELS_DIR environment variable to override
 MODELS_DIR = Path(os.environ.get("MODELS_DIR", str(BASE_DIR / "models")))
 PADDLEOCR_MODEL_DIR = MODELS_DIR / "paddleocr"
 INSIGHTFACE_MODEL_DIR = MODELS_DIR / "insightface"
 
-# Persistence settings (SOW 4.8 - No Persistence mode)
+# Persistence settings - No Persistence mode
 # Set to False to disable saving images to disk/database
 PERSIST_IMAGES = os.environ.get("PERSIST_IMAGES", "true").lower() == "true"
+
+# API Security (API Key Authentication)
+# Comma-separated list of valid API keys. If empty, auth is disabled.
+API_KEYS = [k.strip() for k in os.environ.get("API_KEYS", "").split(",") if k.strip()]
+
+# Logging configuration
+LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO")
+LOG_JSON_FORMAT = os.environ.get("LOG_JSON_FORMAT", "true").lower() == "true"
 
 # Ensure directories exist
 for dir_path in [ID_CARDS_DIR, SELFIES_DIR, PROCESSED_DIR]:
@@ -135,7 +143,7 @@ PLACE_OF_BIRTH_MANUAL_THRESHOLD = 0.4
 # Date Comparison Tolerance (Days)
 DATE_TOLERANCE_DAYS = 1
 
-# Field Validation Configuration (SOW 4.6 / 6.0)
+# Field Validation Configuration
 SEVERITY_WEIGHTS = {
     "high": 1.0,
     "medium": 0.5,
