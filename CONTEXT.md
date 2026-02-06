@@ -116,6 +116,48 @@ Fields have severity levels determining verification outcome:
 - **Global Handler**: `main.py` catches `AppError` and returns consistent JSON error responses.
 - **Services**: Raise specific exceptions instead of returning `{"error": ...}` dicts.
 
+## 6. SOW Gap Analysis & Production Readiness
+> [!WARNING]
+> The following gaps must be closed to meet the SOW requirements for the Enterprise Release.
+
+### Deployment & Architecture
+*   **Gap (SOW 3.4)**: Missing **Dockerfile** and `docker-compose.yml`.
+*   **Gap (SOW 3.4)**: ML Models (PaddleOCR, InsightFace) are downloaded at runtime from the internet. **Must be bundled offline** (e.g., in Docker image).
+*   **Gap (SOW 4.8)**: System violates "No Persistence" rule by saving images to `data/processed` and. `services/database.py` currently stores blobs. Disabling persistence must be configurable.
+
+### Features & Functional
+*   **Gap (SOW 4.7)**: Missing **Admin Portal**. No web UI for configuration.
+*   **Gap (SOW 4.7)**: No **Dynamic Configuration Database**. All config is currently hardcoded in `utils/config.py` or `.env`.
+*   **Gap (SOW 4.7)**: Missing **RBAC** (Admin vs Read-Only) and **Audit Logs** for config changes.
+*   **Gap (SOW 4.4)**: Face Match Score is 0.0-1.0. SOW requires **0-100 normalization**.
+*   **Gap (SOW 4.3)**: Quality checks missing `is_recoverable` flag to guide user styling.
+
+### API & Interface
+*   **Gap (SOW 4.6)**: Missing URL Versioning (e.g., `/api/v1/...`).
+*   **Gap (SOW 4.6)**: Missing **Asynchronous/Polling** API support for heavy OCR jobs.
+*   **Gap (SOW 4.6/7.0)**: Missing **Transaction ID** (`transaction_id`) in Request/Response headers or body.
+*   **Gap (SOW 6.0)**: Error responses lack specific error codes (e.g., `ERR_CAM_001`). Currently generic 400/500.
+
+*   **Gap (API 1)**: Missing specific endpoint for **"Document OCR & Data Consistency Check"**.
+    *   **Input**: Multipart (JSON Metadata + JSON User Data + Binary Images).
+    *   **Logic**: Must combine OCR, Document Validation, Field Comparison, and Translation into one atomic operation.
+    *   **Output**: Strict schema with `transliteratedName` breakdown and `dataComparison` arrays.
+*   **Gap (API 2)**: Missing specific endpoint for **"Biometric Face Matching & Liveness"**.
+    *   **Purpose**: Specialized endpoint completely separate from OCR.
+    *   **Constraint**: Response must contain `faceMatch` (Status/Score), `liveness` (Result/Score), and `imageQuality`.
+    *   **Gap**: Response must include `finalScore` (requiring cross-reference to API 1 transaction).
+
+### Model Lifecycle & Management (SOW 11)
+*   **Gap (SOW 11.1)**: Models are currently auto-downloaded or cached in user home dir. **MUST be "Deployable Artifacts"** (offline packs) under full ONECASH control.
+*   **Gap (SOW 11.2)**: System does not expose **Model Version** in API responses.
+*   **Gap (SOW 11.5)**: System does not log **Model Name & Version** for every transaction.
+
+### Non-Functional
+*   **Gap (SOW 5.1)**: **Blocking Operations**: `verify_identity` runs CPU-bound ML tasks on the main AsyncIO thread. Must use `run_in_threadpool`.
+*   **Gap (SOW 5.2)**: Missing **API Authentication** (API Key/OAuth middleware).
+*   **Gap (SOW 5.5)**: Logs are unstructured text. SOW requires **JSON Structured Logging**.
+*   **Gap (SOW 5.5)**: Missing **Prometheus Metrics** endpoint (`/metrics`).
+
 ## 5. Agent Guidelines
 - **Running Tests**: Check `docs/TESTING_GUIDE.md`. Preferred script: `python tests/test_verify_enhanced.py`.
 - **Config**: Do not hardcode thresholds. Use `utils.config`.
