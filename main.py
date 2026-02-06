@@ -18,12 +18,13 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse
 
 from utils.exceptions import AppError
+from utils.logging_config import configure_logging
+from utils.config import API_KEYS, LOG_LEVEL, LOG_JSON_FORMAT
+from middleware.request_id import RequestIDMiddleware
+from middleware.api_key import APIKeyMiddleware
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-)
+# Configure structured JSON logging
+configure_logging(level=LOG_LEVEL, json_format=LOG_JSON_FORMAT)
 logger = logging.getLogger(__name__)
 
 
@@ -111,6 +112,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Add custom middleware (order matters: first added = outermost)
+app.add_middleware(RequestIDMiddleware)
+app.add_middleware(APIKeyMiddleware, api_keys=API_KEYS)
+
 
 # =============================================================================
 # GLOBAL EXCEPTION HANDLER
@@ -132,8 +137,10 @@ async def app_error_handler(request: Request, exc: AppError):
 # Include API routes
 from api.routes import router as production_router
 from api.test_routes import test_router
-app.include_router(production_router)
-app.include_router(test_router, tags=["Testing"])
+from api.routes.metrics import router as metrics_router
+app.include_router(production_router, prefix="/api/v1")
+app.include_router(test_router, prefix="/test", tags=["Testing"])
+app.include_router(metrics_router)  # /metrics at root level
 
 # Serve static files
 static_dir = Path(__file__).parent / "static"
