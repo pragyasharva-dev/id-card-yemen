@@ -24,6 +24,7 @@ dependencies = [
     "ultralytics>=8.0.0",
     "pytesseract>=0.3.10",
     "ngrok>=1.4.0",
+    "prometheus-client>=0.20.0",
 ]
 
 [dependency-groups]
