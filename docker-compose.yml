@@ -5,10 +5,18 @@ services:
       dockerfile: Dockerfile
     image: ekyc-api:latest
     container_name: ekyc-api
+    # =========================================================================
+    # LOG ROTATION - Adjust these values as needed for your server
+    # =========================================================================
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m" # Max size per log file (e.g., 10m, 50m, 100m)
+        max-file: "5" # Number of log files to keep (rotates oldest)
     ports:
       - "8000:8000"
     environment:
-      # Disable image persistence for production (SOW 4.8)
+      # Disable image persistence for production
       - PERSIST_IMAGES=false
       # Model directories (already set in Dockerfile, but can override)
       - MODELS_DIR=/app/models
