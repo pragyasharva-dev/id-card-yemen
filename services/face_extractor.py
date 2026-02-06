@@ -2,7 +2,9 @@
 Face Extractor Service using InsightFace.
 
 Handles face detection and extraction from ID card images.
+Supports offline model loading via INSIGHTFACE_MODEL_DIR config.
 """
+import os
 import cv2
 import numpy as np
 from typing import Optional, Tuple, List
@@ -15,7 +17,7 @@ except ImportError:
     INSIGHTFACE_AVAILABLE = False
     FaceAnalysis = None
 
-from utils.config import FACE_DETECTION_MODEL, FACE_DETECTION_CTX
+from utils.config import FACE_DETECTION_MODEL, FACE_DETECTION_CTX, INSIGHTFACE_MODEL_DIR
 
 
 class FaceExtractor:
@@ -39,8 +41,16 @@ class FaceExtractor:
             )
         
         if FaceExtractor._app is None:
+            # Check for local models directory (offline mode)
+            root = None
+            if INSIGHTFACE_MODEL_DIR.exists():
+                root = str(INSIGHTFACE_MODEL_DIR)
+                # Set environment variable for InsightFace to find models
+                os.environ["INSIGHTFACE_HOME"] = root
+            
             FaceExtractor._app = FaceAnalysis(
                 name=FACE_DETECTION_MODEL,
+                root=root,
                 providers=['CPUExecutionProvider']
             )
             # Prepare for different image sizes
