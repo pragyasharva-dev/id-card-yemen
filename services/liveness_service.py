@@ -14,8 +14,11 @@ Detection Techniques:
 Strict Mode: ALL checks must pass for liveness to pass.
 """
 import cv2
+import logging
 import numpy as np
 from typing import Dict, Optional, Tuple
+
+logger = logging.getLogger(__name__)
 
 # Fast LBP from skimage
 try:
@@ -35,6 +38,7 @@ from utils.config import (
     LIVENESS_THRESHOLD,
 )
 from utils.exceptions import ServiceError
+from utils.logging_config import log_execution_time
 
 
 # Minimum image size for selfies
@@ -298,6 +302,7 @@ def detect_moire_patterns(gray_image: np.ndarray) -> float:
     return 0.5
 
 
+@log_execution_time
 def detect_spoof(image: np.ndarray) -> Dict:
     """
     Passive liveness detection for selfie images.
@@ -487,6 +492,15 @@ def detect_spoof(image: np.ndarray) -> Dict:
         result["confidence"] = float(round(confidence, 3))
         result["spoof_probability"] = float(round(1.0 - confidence, 3))
         result["checks"] = checks
+        
+        # Log the result for observability
+        if is_live:
+            logger.info(f"Liveness PASSED: confidence={confidence:.3f}")
+        else:
+            failed_list = [name for name, passed in core_checks if not passed]
+            if not ml_passed:
+                failed_list.append("ml_model")
+            logger.warning(f"Liveness FAILED: confidence={confidence:.3f}, failed_checks={failed_list}")
         
         return result
         

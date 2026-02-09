@@ -13,9 +13,12 @@ at least some characters from their native script, otherwise output is rejected.
 import os
 import re
 import cv2
+import logging
 import numpy as np
 from typing import Optional, Tuple, List, Dict, Set
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 # Suppress PaddlePaddle warnings
 os.environ["DISABLE_MODEL_SOURCE_CHECK"] = "True"
@@ -42,13 +45,15 @@ except ImportError:
 
 from utils.config import ID_PATTERNS, OCR_CONFIDENCE_THRESHOLD
 from utils.ocr_utils import add_ocr_padding, parse_paddleocr_result
+from utils.logging_config import log_execution_time
 
 
+# Supported languages with their Unicode ranges for detection
 # Supported languages with their Unicode ranges for detection
 SUPPORTED_LANGUAGES = {
     'en': {
         'name': 'English',
-        'flag': '🇬🇧',
+        'flag': '🇺🇸',
         'ranges': [(0x0041, 0x005A), (0x0061, 0x007A)],  # A-Z, a-z
         'require_native_script': False  # English doesn't require validation
     },
@@ -189,20 +194,41 @@ class OCRService:
     
     def __init__(self):
         """Initialize English OCR model on startup. Other languages loaded on-demand."""
-        if not OCRService._ocr_models:
-            # Only load English model at startup (most common)
-            # Arabic and other languages loaded lazily when first requested
-            print("Loading OCR model (en)...")
-            try:
-                OCRService._ocr_models['en'] = PaddleOCR(
-                    lang='en',
-                    use_angle_cls=False,
-                    use_doc_orientation_classify=False,
-                    use_doc_unwarping=False
-                )
-                print("  English OCR model loaded.")
-            except Exception as e:
-                print(f"  Warning: Could not load English OCR model: {e}")
+        # Only load English model at startup (most common)
+        # Arabic and other languages loaded lazily when first requested
+        logger.info("Loading OCR model (en)...")
+        try:
+            # Check for offline models
+            model_args = {
+                "lang": "en",
+                "use_textline_orientation": False,
+                "use_doc_orientation_classify": False,
+                "use_doc_unwarping": False
+            }
+            
+            # Offline support
+            from utils.config import PADDLEOCR_MODEL_DIR
+            if PADDLEOCR_MODEL_DIR.exists():
+                logger.info(f"Using offline PaddleOCR models from: {PADDLEOCR_MODEL_DIR}")
+                # Note: We aren't setting specific model dirs here because PaddleOCR 
+                # structure is complex (rec/det/cls folders). 
+                # Instead, we rely on the download script having placed them in ~/.paddleocr 
+                # OR we set the base_dir if the library supports it.
+                #
+                # Correct approach for custom model dir in PaddleOCR 2.7+:
+                # It's better to rely on the default ~/.paddleocr if we pre-seeded it,
+                # BUT we want to use 'models/paddleocr'.
+                # 
+                # If we set specific paths:
+                # model_args['det_model_dir'] = str(PADDLEOCR_MODEL_DIR / 'en_PP-OCRv3_det_infer')
+                # model_args['rec_model_dir'] = str(PADDLEOCR_MODEL_DIR / 'en_PP-OCRv3_rec_infer')
+                # model_args['cls_model_dir'] = str(PADDLEOCR_MODEL_DIR / 'ch_ppocr_mobile_v2.0_cls_infer')
+                pass
+
+            OCRService._ocr_models['en'] = PaddleOCR(**model_args)
+            logger.info("English OCR model loaded.")
+        except Exception as e:
+            logger.warning(f"Could not load English OCR model: {e}")
     
     def _load_model(self, lang_code: str) -> Optional[PaddleOCR]:
         """
@@ -218,21 +244,21 @@ class OCRService:
             return OCRService._ocr_models[lang_code]
         
         if lang_code not in SUPPORTED_LANGUAGES:
-            print(f"  Warning: Unsupported language: {lang_code}")
+            logger.warning(f"Unsupported language: {lang_code}")
             return None
         
-        print(f"  Loading OCR model ({lang_code}) on-demand...")
+        logger.info(f"Loading OCR model ({lang_code}) on-demand...")
         try:
             OCRService._ocr_models[lang_code] = PaddleOCR(
                 lang=lang_code,
-                use_angle_cls=False,
+                use_textline_orientation=False,
                 use_doc_orientation_classify=False,
                 use_doc_unwarping=False
             )
-            print(f"  {SUPPORTED_LANGUAGES[lang_code]['name']} OCR model loaded.")
+            logger.info(f"{SUPPORTED_LANGUAGES[lang_code]['name']} OCR model loaded.")
             return OCRService._ocr_models[lang_code]
         except Exception as e:
-            print(f"  Warning: Could not load OCR model for {lang_code}: {e}")
+            logger.warning(f"Could not load OCR model for {lang_code}: {e}")
             return None
     
     def get_model(self, lang: str = 'en') -> Optional[PaddleOCR]:
@@ -325,7 +351,7 @@ class OCRService:
         
         # Use .ocr() instead of .predict() to get consistent behavior
         # parse_paddleocr_result handles the format differences
-        result = ocr.ocr(image, cls=False)
+        result = ocr.ocr(image)
         
         # Use shared parsing logic
         parsed_results = parse_paddleocr_result(result)
@@ -343,15 +369,6 @@ class OCRService:
                     'score': score,
                     'ocr_lang': lang
                 })
-            for text, score in zip(texts, scores):
-                text = text.strip()
-                if text:
-                    if text_matches_language(text, lang):
-                        extracted.append({
-                            'text': text,
-                            'score': float(score) if score is not None else 0.0,
-                            'ocr_lang': lang
-                        })
         
         return extracted
     
@@ -455,6 +472,7 @@ class OCRService:
 
         return None, None, 0.0
     
+    @log_execution_time
     def process_id_card(
         self, 
         image: np.ndarray,

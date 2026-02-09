@@ -10,9 +10,12 @@ The model outputs a spoof probability (0.0 = real, 1.0 = spoof).
 If no pre-trained model is available, falls back to basic checks.
 """
 import cv2
+import logging
 import numpy as np
 from typing import Dict, Optional, Tuple
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 # Try to import ONNX Runtime
 try:
@@ -59,7 +62,7 @@ class AntiSpoofModel:
                     providers=['CPUExecutionProvider']
                 )
             except Exception as e:
-                print(f"Warning: Failed to load anti-spoof model: {e}")
+                logger.warning(f"Failed to load anti-spoof model: {e}")
                 AntiSpoofModel._session = None
     
     def is_available(self) -> bool:

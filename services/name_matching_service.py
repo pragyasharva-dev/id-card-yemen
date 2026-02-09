@@ -16,9 +16,12 @@ Key Principles:
 """
 
 from typing import Optional, Literal
+import logging
 import re
 import unicodedata
 from difflib import SequenceMatcher
+
+logger = logging.getLogger(__name__)
 
 
 def normalize_arabic_name(text: str) -> str:
@@ -287,6 +290,12 @@ def validate_name_match(
         # High severity field: Low scores may cause rejection
         results["decision"] = "reject"
         results["reason"] = f"Name mismatch (score: {results['final_score']:.2f}), likely different person"
+    
+    # Log the result for observability
+    logger.info(
+        f"Name match: decision={results['decision']}, score={results['final_score']:.2f}, "
+        f"reason='{results['reason']}'"
+    )
     
     return results
 

@@ -1,0 +1,33 @@
+services:
+  ekyc-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ekyc-api:latest
+    container_name: ekyc-api
+    # =========================================================================
+    # LOG ROTATION - Adjust these values as needed for your server
+    # =========================================================================
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m" # Max size per log file (e.g., 10m, 50m, 100m)
+        max-file: "5" # Number of log files to keep (rotates oldest)
+    ports:
+      - "8000:8000"
+    environment:
+      # Disable image persistence for production
+      - PERSIST_IMAGES=false
+      # Model directories (already set in Dockerfile, but can override)
+      - MODELS_DIR=/app/models
+    volumes:
+      # Mount local models directory (for development/testing)
+      # In production, models should be baked into the image
+      - ./models:/app/models:ro
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:8000/health" ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    restart: unless-stopped

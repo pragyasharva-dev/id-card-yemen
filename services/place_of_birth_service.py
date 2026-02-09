@@ -11,8 +11,11 @@ Key Principles:
 """
 
 from typing import Optional, Literal
+import logging
 import re
 import unicodedata
+
+logger = logging.getLogger(__name__)
 
 from data.yemen_locations import (
     find_governorate_by_name,
@@ -319,8 +322,8 @@ def validate_place_of_birth(
         else:
             reason = f"Weak match (score: {final_score:.2f}), needs review"
     
-    # Use user-provided normalization as the canonical version
-    return {
+    # Build return result
+    result = {
         "ocr_raw": ocr_raw,
         "user_input": user_input,
         "normalized": user_norm_struct,
@@ -329,3 +332,11 @@ def validate_place_of_birth(
         "decision": decision,
         "reason": reason
     }
+    
+    # Log the result for observability
+    logger.info(
+        f"Place of birth: decision={decision}, score={final_score:.2f}, "
+        f"reason='{reason}'"
+    )
+    
+    return result

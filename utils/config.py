@@ -1,6 +1,5 @@
-"""
-Configuration settings for the e-KYC system.
-"""
+"""Configuration settings for the e-KYC system."""
+import os
 from pathlib import Path
 
 # Base directories
@@ -9,6 +8,27 @@ DATA_DIR = BASE_DIR / "data"
 ID_CARDS_DIR = DATA_DIR / "id_cards"
 SELFIES_DIR = DATA_DIR / "selfies"
 PROCESSED_DIR = DATA_DIR / "processed"
+
+# Models directory for offline deployment
+# Set MODELS_DIR environment variable to override
+MODELS_DIR = Path(os.environ.get("MODELS_DIR", str(BASE_DIR / "models")))
+PADDLEOCR_MODEL_DIR = MODELS_DIR / "paddleocr"
+INSIGHTFACE_MODEL_DIR = MODELS_DIR / "insightface"
+
+# Persistence settings - No Persistence mode
+# Set to False to disable saving images to disk/database
+PERSIST_IMAGES = os.environ.get("PERSIST_IMAGES", "true").lower() == "true"
+
+# API Security (API Key Authentication)
+# Comma-separated list of valid API keys. If empty, auth is disabled.
+API_KEYS = [k.strip() for k in os.environ.get("API_KEYS", "").split(",") if k.strip()]
+
+# Logging configuration
+LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO")
+LOG_JSON_FORMAT = os.environ.get("LOG_JSON_FORMAT", "true").lower() == "true"
+
+# Face matching threshold (0.0 to 1.0, default 0.7 = 70% similarity required)
+FACE_MATCH_THRESHOLD = float(os.environ.get("FACE_MATCH_THRESHOLD", "0.7"))
 
 # Ensure directories exist
 for dir_path in [ID_CARDS_DIR, SELFIES_DIR, PROCESSED_DIR]:
@@ -117,3 +137,105 @@ DOC_HIGH_TEXTURE_THRESHOLD = 0.92
 DOC_MIN_SATURATION_FOR_HIGH_TEXTURE = 0.06  # Reject only very flat prints; originals can be muted (lighting/passport design)
 
 
+
+
+# Place of Birth Validation Thresholds
+PLACE_OF_BIRTH_PASS_THRESHOLD = 0.8
+PLACE_OF_BIRTH_MANUAL_THRESHOLD = 0.4
+
+# Date Comparison Tolerance (Days)
+DATE_TOLERANCE_DAYS = 1
+
+# Field Validation Configuration
+SEVERITY_WEIGHTS = {
+    "high": 1.0,
+    "medium": 0.5,
+    "low": 0.2
+}
+
+FIELD_CONFIGURATIONS = {
+    "id_number": {
+        "severity": "high",
+        "matching_type": "exact",
+        "pass_threshold": 1.0,
+        "manual_threshold": 1.0,
+        "enabled": True
+    },
+    "passport_number": {
+        "severity": "high",
+        "matching_type": "exact",
+        "pass_threshold": 1.0,
+        "manual_threshold": 1.0,
+        "enabled": True
+    },
+    "date_of_birth": {
+        "severity": "high",
+        "matching_type": "exact",
+        "pass_threshold": 1.0,
+        "manual_threshold": 1.0,
+        "enabled": True
+    },
+    "name_english": {
+        "severity": "high",
+        "matching_type": "fuzzy",
+        "pass_threshold": 0.85,
+        "manual_threshold": 0.60,
+        "enabled": True
+    },
+    "name_arabic": {
+        "severity": "high",
+        "matching_type": "fuzzy",
+        "pass_threshold": 0.85,
+        "manual_threshold": 0.60,
+        "enabled": True
+    },
+    "issuance_date": {
+        "severity": "medium",
+        "matching_type": "exact",  # with tolerance logic in code
+        "pass_threshold": 1.0,
+        "manual_threshold": 0.5,
+        "enabled": True
+    },
+    "expiry_date": {
+        "severity": "medium",
+        "matching_type": "exact",  # with tolerance logic in code
+        "pass_threshold": 1.0,
+        "manual_threshold": 0.5,
+        "enabled": True
+    },
+    "gender": {
+        "severity": "medium",
+        "matching_type": "exact",
+        "pass_threshold": 1.0,
+        "manual_threshold": 1.0,
+        "enabled": True
+    },
+    "place_of_birth": {
+        "severity": "medium",
+        "matching_type": "token",
+        "pass_threshold": PLACE_OF_BIRTH_PASS_THRESHOLD,
+        "manual_threshold": PLACE_OF_BIRTH_MANUAL_THRESHOLD,
+        "enabled": True
+    },
+    "nationality": {
+        "severity": "low",
+        "matching_type": "fuzzy",
+        "pass_threshold": 0.80,
+        "manual_threshold": 0.50,
+        "enabled": True
+    },
+    "profession": {
+        "severity": "low",
+        "matching_type": "fuzzy",
+        "pass_threshold": 0.75,
+        "manual_threshold": 0.40,
+        "enabled": True
+    },
+    "issuance_place": {
+        "severity": "low",
+        "matching_type": "fuzzy",
+        "pass_threshold": 0.75,
+        "manual_threshold": 0.40,
+        "enabled": True
+    }
+}

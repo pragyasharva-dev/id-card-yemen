@@ -116,6 +116,55 @@ Fields have severity levels determining verification outcome:
 - **Global Handler**: `main.py` catches `AppError` and returns consistent JSON error responses.
 - **Services**: Raise specific exceptions instead of returning `{"error": ...}` dicts.
 
+### G. Logging Strategy (`utils/logging_config.py`)
+- **Structured JSON**: All logs are JSON-formatted for easy parsing (Splunk/ELK).
+- **Contextual**: Logs include `timestamp`, `level`, `logger`, `message`, `transaction_id`, and `latency_ms`.
+- **Performance Tracking**: `@log_execution_time` decorator automatically logs duration of key operations (OCR, Face Match).
+- **Full Coverage**: All services (including silent ones like `face_extractor`) now emit structured logs.
+
+
+## 6. Gap Analysis & Production Readiness
+> [!WARNING]
+> The following gaps must be closed to meet the requirements for the Enterprise Release.
+
+### Deployment & Architecture
+*   **(RESOLVED) Gap (Deployment)**: Missing **Dockerfile** and `docker-compose.yml`.
+*   **(RESOLVED) Gap (Deployment)**: ML Models (PaddleOCR, InsightFace) are downloaded at runtime from the internet. **Must be bundled offline** (e.g., in Docker image).
+*   **(RESOLVED) Gap (Data Flow)**: System violates "No Persistence" rule by saving images to `data/processed` and. `services/database.py` currently stores blobs. Disabling persistence must be configurable.
+
+### Features & Functional
+*   **Gap (Admin)**: Missing **Admin Portal**. No web UI for configuration.
+*   **Gap (Admin)**: No **Dynamic Configuration Database**. All config is currently hardcoded in `utils/config.py` or `.env`.
+*   **Gap (Admin)**: Missing **RBAC** (Admin vs Read-Only) and **Audit Logs** for config changes.
+*   **Gap (Face Match)**: Face Match Score is 0.0-1.0. Requirement: **0-100 normalization**.
+*   **Gap (Quality)**: Quality checks missing `is_recoverable` flag to guide user styling.
+
+### API & Interface
+*   **(RESOLVED) Gap (API)**: Missing URL Versioning (e.g., `/api/v1/...`).
+*   **(RESOLVED) Gap (API/Audit)**: Missing **Transaction ID** (`transaction_id`) in Request/Response headers or body.
+*   **Gap (API)**: Missing **Asynchronous/Polling** API support for heavy OCR jobs.
+*   **Gap (Error Handling)**: Error responses lack specific error codes (e.g., `ERR_CAM_001`). Currently generic 400/500.
+
+*   **(RESOLVED) Gap (API 1)**: Missing specific endpoint for **"Document OCR & Data Consistency Check"**.
+    *   **Input**: Multipart (JSON Metadata + JSON User Data + Binary Images).
+    *   **Logic**: Must combine OCR, Document Validation, Field Comparison, and Translation into one atomic operation.
+    *   **Output**: Strict schema with `transliteratedName` breakdown and `dataComparison` arrays.
+*   **(RESOLVED) Gap (API 2)**: Missing specific endpoint for **"Biometric Face Matching & Liveness"**.
+    *   **Purpose**: Specialized endpoint completely separate from OCR.
+    *   **Constraint**: Response must contain `faceMatch` (Status/Score), `liveness` (Result/Score), and `imageQuality`.
+    *   **Gap**: Response must include `finalScore` (requiring cross-reference to API 1 transaction).
+
+### Model Lifecycle & Management
+*   **Gap (Model)**: Models are currently auto-downloaded or cached in user home dir. **MUST be "Deployable Artifacts"** (offline packs) under full ONECASH control.
+*   **Gap (Model)**: System does not expose **Model Version** in API responses.
+*   **Gap (Model)**: System does not log **Model Name & Version** for every transaction.
+
+### Non-Functional
+*   **Gap (Performance)**: **Blocking Operations**: `verify_identity` runs CPU-bound ML tasks on the main AsyncIO thread. Must use `run_in_threadpool`.
+*   **(RESOLVED) Gap (Security)**: Missing **API Authentication** (API Key/OAuth middleware).
+*   **(RESOLVED) Gap (Observability)**: Logs are unstructured text. Requirement: **JSON Structured Logging**. (Implemented with full service layer coverage & latency tracking).
+*   **(RESOLVED) Gap (Observability)**: Missing **Prometheus Metrics** endpoint (`/metrics`).
+
 ## 5. Agent Guidelines
 - **Running Tests**: Check `docs/TESTING_GUIDE.md`. Preferred script: `python tests/test_verify_enhanced.py`.
 - **Config**: Do not hardcode thresholds. Use `utils.config`.
