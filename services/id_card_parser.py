@@ -12,10 +12,13 @@ Extracts structured data from Yemen ID cards including:
 - ID Number
 """
 import re
+import logging
 from typing import Dict, List, Optional, Tuple
 from datetime import datetime
 
 from services.translation_service import translate_text
+
+logger = logging.getLogger(__name__)
 from utils.date_utils import format_date
 
 
@@ -153,10 +156,10 @@ def extract_name_from_texts(texts: List[str], text_results: List[Dict]) -> Tuple
             # Validate translation quality
             # If translation is too short or contains weird characters, it might have failed
             if english_name and (len(english_name) < 3 or english_name.count(',') > 2):
-                print(f"Warning: Poor translation quality for '{arabic_name}' -> '{english_name}'")
+                logger.warning(f"Poor translation quality for '{arabic_name}' -> '{english_name}'")
                 # Keep the translation anyway, but log it
         except Exception as e:
-            print(f"Translation failed for '{arabic_name}': {e}")
+            logger.warning(f"Translation failed for '{arabic_name}': {e}")
             english_name = None
     
     return arabic_name, english_name
@@ -208,7 +211,7 @@ def extract_place_of_birth(texts: List[str]) -> Optional[str]:
     # Pattern for DOB: YYYY/MM/DD or YYYY-MM-DD or YYYY.MM.DD (allow spaces)
     date_pattern = r'(\d{4}\s*[./-]\s*\d{1,2}\s*[./-]\s*\d{1,2})'
     
-    print("DEBUG: Starting Place of Birth extraction...")
+    logger.debug("Starting Place of Birth extraction...")
     
     # Helper to validate Arabic text quality
     def is_valid_arabic_text(text: str) -> bool:
@@ -232,7 +235,7 @@ def extract_place_of_birth(texts: List[str]) -> Optional[str]:
         match = re.search(date_pattern, clean_text)
         
         if match:
-            print(f"DEBUG: Found DOB pattern in line: '{clean_text}'")
+            logger.debug(f"Found DOB pattern in line: '{clean_text}'")
             
             # Strategy 1: Check text AFTER date (Standard user description)
             date_end_index = match.end()
@@ -241,10 +244,10 @@ def extract_place_of_birth(texts: List[str]) -> Optional[str]:
             
             if len(cleaned_after) > 2:
                 if is_valid_arabic_text(cleaned_after):
-                    print(f"DEBUG: Found place AFTER date: '{cleaned_after}'")
+                    logger.debug(f"Found place AFTER date: '{cleaned_after}'")
                     return translate_text(cleaned_after, source="ar", target="en")
                 else:
-                     print(f"DEBUG: Rejected text AFTER date (invalid Arabic): '{cleaned_after}'")
+                    logger.debug(f"Rejected text AFTER date (invalid Arabic): '{cleaned_after}'")
             
             # Strategy 2: Check text BEFORE date (Fallback for RTL/OCR issues)
             date_start_index = match.start()
@@ -253,10 +256,10 @@ def extract_place_of_birth(texts: List[str]) -> Optional[str]:
             
             if len(cleaned_before) > 2:
                 if is_valid_arabic_text(cleaned_before):
-                    print(f"DEBUG: Found place BEFORE date: '{cleaned_before}'")
+                    logger.debug(f"Found place BEFORE date: '{cleaned_before}'")
                     return translate_text(cleaned_before, source="ar", target="en")
                 else:
-                    print(f"DEBUG: Rejected text BEFORE date (invalid Arabic): '{cleaned_before}'")
+                    logger.debug(f"Rejected text BEFORE date (invalid Arabic): '{cleaned_before}'")
 
             # Strategy 3: Check immediate next line (Split line case)
             if i + 1 < len(texts):
@@ -265,13 +268,13 @@ def extract_place_of_birth(texts: List[str]) -> Optional[str]:
                 
                 # Verify it's not another date or noise
                 if len(cleaned_next) > 2 and not re.search(date_pattern, cleaned_next):
-                     if is_valid_arabic_text(cleaned_next):
-                         print(f"DEBUG: Found place on NEXT line: '{cleaned_next}'")
-                         return translate_text(cleaned_next, source="ar", target="en")
-                     else:
-                         print(f"DEBUG: Ignored next line content (invalid Arabic): '{cleaned_next}'")
+                    if is_valid_arabic_text(cleaned_next):
+                        logger.debug(f"Found place on NEXT line: '{cleaned_next}'")
+                        return translate_text(cleaned_next, source="ar", target="en")
+                    else:
+                        logger.debug(f"Ignored next line content (invalid Arabic): '{cleaned_next}'")
                 
-    print("DEBUG: No Place of Birth found.")
+    logger.debug("No Place of Birth found.")
     return None
 
 
