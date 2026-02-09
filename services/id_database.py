@@ -5,82 +5,67 @@ from typing import Optional, Tuple, Any, Dict
 from pathlib import Path
 import cv2
 import numpy as np
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from services.database import get_id_card_db
+from services.data_service import get_document_by_number
 from utils.image_manager import load_image
 
 
-def search_id_card_by_number(id_number: str) -> Optional[Tuple[str, np.ndarray, Dict[str, Any]]]:
+async def search_id_card_by_number(
+    session: AsyncSession,
+    id_number: str
+) -> Optional[Tuple[str, np.ndarray, Dict[str, Any]]]:
     """
-    Search for an ID card by ID number in the database.
+    Search for an ID card by ID number in the PostgreSQL database.
     
     Args:
+        session: Database session
         id_number: The ID number to search for
         
     Returns:
         Tuple containing:
-        - card_path: Path to the ID card image
+        - card_source: "database_blob" or "file_path"
         - id_card_image: Loaded ID card image as numpy array
         - ocr_result: Dictionary with extracted ID details
         
         Returns None if not found.
     """
-    db = get_id_card_db()
-    record = db.get_by_national_id(id_number)
+    document = await get_document_by_number(session, id_number)
     
-    if not record:
+    if not document:
         return None
         
     # Reconstruct OCR result format expected by verification flow
-    # Construct full names from parts if available
-    name_arabic_parts = [
-        record.get("first_name_arabic"), 
-        record.get("middle_name_arabic"), 
-        record.get("last_name_arabic")
-    ]
-    name_arabic = " ".join([p for p in name_arabic_parts if p])
+    ocr_result = document.ocr_data.copy() if document.ocr_data else {}
     
-    name_english_parts = [
-        record.get("first_name_english"), 
-        record.get("middle_name_english"), 
-        record.get("last_name_english")
-    ]
-    name_english = " ".join([p for p in name_english_parts if p])
-
-    ocr_result = {
-        "extracted_id": record["national_id"],
-        "id_type": "yemen_id",
-        "confidence": 1.0,  # Assume 100% confidence for database records
-        "name_arabic": name_arabic,
-        "name_english": name_english,
-        "date_of_birth": record.get("date_of_birth"),
-        "gender": record.get("gender"),
-        "place_of_birth": record.get("place_of_birth"),
-        "issuance_date": record.get("issuance_date"),
-        "expiry_date": record.get("expiry_date")
-    }
+    # Ensure keys exist
+    ocr_result.update({
+        "extracted_id": document.document_number,
+        "id_type": document.document_type,
+        "name_arabic": document.full_name_arabic,
+        "name_english": document.full_name_english,
+    })
     
     # Retrieve image
-    # Try to get the image from blob first, then path
     image = None
-    image_path = record.get("front_image_path")
+    image_source = "database_blob"
     
-    # Try loading from BLOB first (most reliable if saved via API)
-    if record.get("front_image_blob"):
+    # Try loading from BLOB (BYTEA)
+    if document.front_image_data:
         try:
-            nparr = np.frombuffer(record["front_image_blob"], np.uint8)
+            nparr = np.frombuffer(document.front_image_data, np.uint8)
             image = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-            if image_path is None:
-                image_path = "database_blob"
         except Exception:
             pass
             
-    # Fallback to loading from path
-    if image is None and image_path and Path(image_path).exists():
-        image = load_image(image_path)
+    # Fallback to loading from path if blob failed or didn't exist (legacy support)
+    if image is None:
+        # Check if path is in ocr_data or we need to look elsewhere? 
+        # The new model stores images in DB, so we rely on that.
+        # But if we migrated old data which only had paths...
+        pass 
         
     if image is None:
-        # Record exists but no image available for face verification
         return None
         
-    return image_path, image, ocr_result
+    return image_source, image, ocr_result

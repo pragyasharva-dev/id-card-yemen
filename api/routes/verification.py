@@ -1,11 +1,15 @@
 """e-KYC verification endpoints."""
 import cv2
-from fastapi import APIRouter, UploadFile, File
+from fastapi import APIRouter, UploadFile, File, Depends
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.schemas import VerifyRequest, VerifyResponse, LivenessResult
 from services.ocr_service import extract_id_from_image
 from services.face_recognition import verify_identity
-from services.database import get_id_card_db
+# from services.database import get_id_card_db  # Deprecated
+from services.db import get_db
+from services.data_service import save_document, save_verification
+from services.image_quality_service import check_id_quality, check_selfie_quality
 from utils.image_manager import load_image, save_image
 from utils.config import PROCESSED_DIR
 
@@ -16,7 +20,8 @@ router = APIRouter(tags=["Verification"])
 async def verify_identity_endpoint(
     id_card_front: UploadFile = File(..., description="ID card front side image"),
     selfie: UploadFile = File(..., description="Selfie image file"),
-    id_card_back: UploadFile = File(None, description="ID card back side image (optional)")
+    id_card_back: UploadFile = File(None, description="ID card back side image (optional)"),
+    db: AsyncSession = Depends(get_db)
 ):
     """
     e-KYC verification endpoint with optional front and back ID card support.
@@ -105,10 +110,9 @@ async def verify_identity_endpoint(
             )
         
         # AUTO-SAVE: Save extracted data to database after successful verification
+        
         if extracted_id:
             try:
-                db = get_id_card_db()
-                
                 # Convert images to JPEG bytes for blob storage
                 front_blob = None
                 back_blob = None
@@ -126,8 +130,10 @@ async def verify_identity_endpoint(
                     _, selfie_encoded = cv2.imencode('.jpg', selfie_image)
                     selfie_blob = selfie_encoded.tobytes()
                 
-                db_data = {
-                    "national_id": extracted_id,
+                # Prepare OCR data for JSONB storage
+                ocr_store_data = {
+                    "extracted_id": extracted_id,
+                    "id_type": id_type,
                     "name_arabic": parsed_data.get("name_arabic"),
                     "name_english": parsed_data.get("name_english"),
                     "date_of_birth": parsed_data.get("date_of_birth"),
@@ -135,20 +141,79 @@ async def verify_identity_endpoint(
                     "gender": parsed_data.get("gender"),
                     "issuance_date": parsed_data.get("issuance_date"),
                     "expiry_date": parsed_data.get("expiry_date"),
-                    "front_image_blob": front_blob,
-                    "back_image_blob": back_blob,
-                    "selfie_image_blob": selfie_blob
+                    # Store original OCR raw text if available in future
                 }
-                
-                # Check if record exists, update or insert
-                existing = db.get_by_national_id(extracted_id)
-                if existing:
-                    db.update(extracted_id, db_data)
-                else:
-                    db.insert(db_data)
+
+                # Save Document (Upsert)
+                doc_record = await save_document(
+                    session=db,
+                    document_number=extracted_id,
+                    document_type=id_type or "unknown",
+                    ocr_data=ocr_store_data,
+                    front_image_data=front_blob,
+                    back_image_data=back_blob
+                )
+
+                # Save Verification Result
+                if doc_record:
+                    similarity = face_result.get("similarity_score")
+                    status_val = "verified" if similarity and similarity > 0.6 else "failed" # Simple threshold logic
+                    # --- Calculate detailed quality and authenticity metrics ---
+
+                    # 1. Image Quality Metrics (from Quality Service)
+                    id_quality = check_id_quality(id_card_front_image)
+                    selfie_quality = check_selfie_quality(selfie_image)
+                    
+                    quality_metrics = {
+                        "id_card": {
+                            "score": id_quality.get("quality_score"),
+                            "face_visible": id_quality.get("face_visible"),
+                            "details": id_quality.get("details", {})
+                        },
+                        "selfie": {
+                            "score": selfie_quality.get("quality_score"),
+                            "face_visible": selfie_quality.get("face_visible"),
+                            "details": selfie_quality.get("details", {})
+                        }
+                    }
+
+                    # 2. Authenticity Checks (Derived from OCR results)
+                    ocr_confidence = float(front_ocr_result.get("confidence", 0.0))
+                    extraction_method = front_ocr_result.get("extraction_method", "unknown")
+                    detected_langs = front_ocr_result.get("detected_languages", [])
+                    
+                    auth_score = ocr_confidence if extraction_method == "yolo" else min(ocr_confidence * 0.8, 1.0)
+                    
+                    auth_checks = {
+                        "ocr_confidence": ocr_confidence,
+                        "extraction_method": extraction_method,
+                        "expected_layout_found": extraction_method == "yolo",
+                        "languages_found": detected_langs,
+                        "overall_authenticity_score": auth_score
+                    }
+
+                    # 3. Failure Reason (Structured)
+                    error_msg = face_result.get("error")
+                    failure_data = {"message": error_msg, "code": "processing_error"} if error_msg else {}
+
+                    # Save to database
+                    await save_verification(
+                        session=db,
+                        document_id=doc_record.id,
+                        status=status_val,
+                        similarity_score=similarity,
+                        selfie_image_data=selfie_blob,
+                        liveness_data=face_result.get("liveness") or {},
+                        image_quality_metrics=quality_metrics,
+                        authenticity_checks=auth_checks,
+                        failure_reason=failure_data
+                    )
+                    
             except Exception as db_error:
                 # Log error but don't fail the verification
                 print(f"Warning: Failed to save to database: {db_error}")
+                import traceback
+                traceback.print_exc()
         
         return VerifyResponse(
             success=True,
@@ -189,7 +254,10 @@ async def verify_identity_endpoint(
 
 
 @router.post("/verify-json", response_model=VerifyResponse)
-async def verify_identity_json(request: VerifyRequest):
+async def verify_identity_json(
+    request: VerifyRequest,
+    db: AsyncSession = Depends(get_db)
+):
     """
     e-KYC verification using JSON body with ID number and selfie path/base64.
     
@@ -207,7 +275,7 @@ async def verify_identity_json(request: VerifyRequest):
             raise ValueError("Either selfie_path or selfie_base64 is required")
         
         # Search for ID card in database
-        search_result = search_id_card_by_number(request.id_number)
+        search_result = await search_id_card_by_number(db, request.id_number)
         
         if search_result is None:
             return VerifyResponse(
