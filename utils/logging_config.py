@@ -70,3 +70,56 @@ def configure_logging(level: str = "INFO", json_format: bool = True) -> None:
     logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("httpcore").setLevel(logging.WARNING)
+
+
+def log_execution_time(func):
+    """
+    Decorator to log function execution time.
+    
+    Logs at INFO level with function name and duration in milliseconds.
+    Works with both synchronous and asynchronous functions.
+    
+    Usage:
+        @log_execution_time
+        def my_function():
+            ...
+            
+        @log_execution_time
+        async def my_async_function():
+            ...
+    """
+    import functools
+    import time
+    import asyncio
+    
+    logger = logging.getLogger(func.__module__)
+    
+    @functools.wraps(func)
+    def sync_wrapper(*args, **kwargs):
+        start_time = time.perf_counter()
+        try:
+            result = func(*args, **kwargs)
+            return result
+        finally:
+            elapsed_ms = (time.perf_counter() - start_time) * 1000
+            logger.info(
+                f"{func.__name__} completed in {elapsed_ms:.2f}ms",
+                extra={"latency_ms": round(elapsed_ms, 2)}
+            )
+    
+    @functools.wraps(func)
+    async def async_wrapper(*args, **kwargs):
+        start_time = time.perf_counter()
+        try:
+            result = await func(*args, **kwargs)
+            return result
+        finally:
+            elapsed_ms = (time.perf_counter() - start_time) * 1000
+            logger.info(
+                f"{func.__name__} completed in {elapsed_ms:.2f}ms",
+                extra={"latency_ms": round(elapsed_ms, 2)}
+            )
+    
+    if asyncio.iscoroutinefunction(func):
+        return async_wrapper
+    return sync_wrapper
