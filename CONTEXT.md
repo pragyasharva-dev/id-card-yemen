@@ -116,6 +116,13 @@ Fields have severity levels determining verification outcome:
 - **Global Handler**: `main.py` catches `AppError` and returns consistent JSON error responses.
 - **Services**: Raise specific exceptions instead of returning `{"error": ...}` dicts.
 
+### G. Logging Strategy (`utils/logging_config.py`)
+- **Structured JSON**: All logs are JSON-formatted for easy parsing (Splunk/ELK).
+- **Contextual**: Logs include `timestamp`, `level`, `logger`, `message`, `transaction_id`, and `latency_ms`.
+- **Performance Tracking**: `@log_execution_time` decorator automatically logs duration of key operations (OCR, Face Match).
+- **Full Coverage**: All services (including silent ones like `face_extractor`) now emit structured logs.
+
+
 ## 6. Gap Analysis & Production Readiness
 > [!WARNING]
 > The following gaps must be closed to meet the requirements for the Enterprise Release.
@@ -138,11 +145,11 @@ Fields have severity levels determining verification outcome:
 *   **Gap (API)**: Missing **Asynchronous/Polling** API support for heavy OCR jobs.
 *   **Gap (Error Handling)**: Error responses lack specific error codes (e.g., `ERR_CAM_001`). Currently generic 400/500.
 
-*   **Gap (API 1)**: Missing specific endpoint for **"Document OCR & Data Consistency Check"**.
+*   **(RESOLVED) Gap (API 1)**: Missing specific endpoint for **"Document OCR & Data Consistency Check"**.
     *   **Input**: Multipart (JSON Metadata + JSON User Data + Binary Images).
     *   **Logic**: Must combine OCR, Document Validation, Field Comparison, and Translation into one atomic operation.
     *   **Output**: Strict schema with `transliteratedName` breakdown and `dataComparison` arrays.
-*   **Gap (API 2)**: Missing specific endpoint for **"Biometric Face Matching & Liveness"**.
+*   **(RESOLVED) Gap (API 2)**: Missing specific endpoint for **"Biometric Face Matching & Liveness"**.
     *   **Purpose**: Specialized endpoint completely separate from OCR.
     *   **Constraint**: Response must contain `faceMatch` (Status/Score), `liveness` (Result/Score), and `imageQuality`.
     *   **Gap**: Response must include `finalScore` (requiring cross-reference to API 1 transaction).
@@ -155,7 +162,7 @@ Fields have severity levels determining verification outcome:
 ### Non-Functional
 *   **Gap (Performance)**: **Blocking Operations**: `verify_identity` runs CPU-bound ML tasks on the main AsyncIO thread. Must use `run_in_threadpool`.
 *   **(RESOLVED) Gap (Security)**: Missing **API Authentication** (API Key/OAuth middleware).
-*   **(RESOLVED) Gap (Observability)**: Logs are unstructured text. Requirement: **JSON Structured Logging**.
+*   **(RESOLVED) Gap (Observability)**: Logs are unstructured text. Requirement: **JSON Structured Logging**. (Implemented with full service layer coverage & latency tracking).
 *   **(RESOLVED) Gap (Observability)**: Missing **Prometheus Metrics** endpoint (`/metrics`).
 
 ## 5. Agent Guidelines
