@@ -15,7 +15,10 @@ Features:
 """
 
 from typing import Dict, List, Optional
+import logging
 from datetime import datetime, timedelta
+
+logger = logging.getLogger(__name__)
 
 from services.name_matching_service import validate_name_match_simple
 from services.place_of_birth_service import validate_place_of_birth
@@ -25,6 +28,7 @@ from utils.config import (
     SEVERITY_WEIGHTS
 )
 from utils.date_utils import parse_date
+from utils.logging_config import log_execution_time
 
 
 def compare_exact(ocr_value: Optional[str], user_value: Optional[str]) -> Dict:
@@ -380,6 +384,7 @@ def compare_field(
     return result
 
 
+@log_execution_time
 def validate_form_vs_ocr(
     manual_data: Dict,
     ocr_data: Dict,
@@ -557,9 +562,9 @@ def validate_form_vs_ocr(
     # Add weighted score to recommendations for reference
     recommendations.append(f"Weighted matching score: {overall_score:.2%}")
     
-    return {
+    result = {
         "overall_decision": overall_decision,
-        "overall_score": overall_score,  # For reporting/analytics only
+        "overall_score": overall_score,
         "field_comparisons": field_comparisons,
         "summary": {
             "total_fields": total_fields,
@@ -569,4 +574,13 @@ def validate_form_vs_ocr(
         },
         "recommendations": recommendations
     }
+    
+    # Log the result for observability
+    logger.info(
+        f"Field validation: decision={overall_decision}, score={overall_score:.2%}, "
+        f"passed={passed_fields}/{total_fields}, review={review_fields}, failed={failed_fields}"
+    )
+    
+    return result
+
 
