@@ -138,7 +138,15 @@ async def app_error_handler(request: Request, exc: AppError):
 from api.routes import router as production_router
 from api.test_routes import test_router
 from api.routes.metrics import router as metrics_router
+from api.routes.v1.ocr_check import router as ocr_check_router
+from api.routes.v1.face_match import router as face_match_router
+
+# Production routes under /api/v1
 app.include_router(production_router, prefix="/api/v1")
+app.include_router(ocr_check_router, prefix="/api/v1")
+app.include_router(face_match_router, prefix="/api/v1")
+
+# Test routes under /test
 app.include_router(test_router, prefix="/test", tags=["Testing"])
 app.include_router(metrics_router)  # /metrics at root level
 
