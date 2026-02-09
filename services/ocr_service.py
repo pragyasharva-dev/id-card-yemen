@@ -13,9 +13,12 @@ at least some characters from their native script, otherwise output is rejected.
 import os
 import re
 import cv2
+import logging
 import numpy as np
 from typing import Optional, Tuple, List, Dict, Set
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 # Suppress PaddlePaddle warnings
 os.environ["DISABLE_MODEL_SOURCE_CHECK"] = "True"
@@ -42,6 +45,7 @@ except ImportError:
 
 from utils.config import ID_PATTERNS, OCR_CONFIDENCE_THRESHOLD
 from utils.ocr_utils import add_ocr_padding, parse_paddleocr_result
+from utils.logging_config import log_execution_time
 
 
 # Supported languages with their Unicode ranges for detection
@@ -192,7 +196,7 @@ class OCRService:
         """Initialize English OCR model on startup. Other languages loaded on-demand."""
         # Only load English model at startup (most common)
         # Arabic and other languages loaded lazily when first requested
-        print("Loading OCR model (en)...")
+        logger.info("Loading OCR model (en)...")
         try:
             # Check for offline models
             model_args = {
@@ -205,7 +209,7 @@ class OCRService:
             # Offline support
             from utils.config import PADDLEOCR_MODEL_DIR
             if PADDLEOCR_MODEL_DIR.exists():
-                print(f"  Using offline PaddleOCR models from: {PADDLEOCR_MODEL_DIR}")
+                logger.info(f"Using offline PaddleOCR models from: {PADDLEOCR_MODEL_DIR}")
                 # Note: We aren't setting specific model dirs here because PaddleOCR 
                 # structure is complex (rec/det/cls folders). 
                 # Instead, we rely on the download script having placed them in ~/.paddleocr 
@@ -222,9 +226,9 @@ class OCRService:
                 pass
 
             OCRService._ocr_models['en'] = PaddleOCR(**model_args)
-            print("  English OCR model loaded.")
+            logger.info("English OCR model loaded.")
         except Exception as e:
-            print(f"  Warning: Could not load English OCR model: {e}")
+            logger.warning(f"Could not load English OCR model: {e}")
     
     def _load_model(self, lang_code: str) -> Optional[PaddleOCR]:
         """
@@ -240,10 +244,10 @@ class OCRService:
             return OCRService._ocr_models[lang_code]
         
         if lang_code not in SUPPORTED_LANGUAGES:
-            print(f"  Warning: Unsupported language: {lang_code}")
+            logger.warning(f"Unsupported language: {lang_code}")
             return None
         
-        print(f"  Loading OCR model ({lang_code}) on-demand...")
+        logger.info(f"Loading OCR model ({lang_code}) on-demand...")
         try:
             OCRService._ocr_models[lang_code] = PaddleOCR(
                 lang=lang_code,
@@ -251,10 +255,10 @@ class OCRService:
                 use_doc_orientation_classify=False,
                 use_doc_unwarping=False
             )
-            print(f"  {SUPPORTED_LANGUAGES[lang_code]['name']} OCR model loaded.")
+            logger.info(f"{SUPPORTED_LANGUAGES[lang_code]['name']} OCR model loaded.")
             return OCRService._ocr_models[lang_code]
         except Exception as e:
-            print(f"  Warning: Could not load OCR model for {lang_code}: {e}")
+            logger.warning(f"Could not load OCR model for {lang_code}: {e}")
             return None
     
     def get_model(self, lang: str = 'en') -> Optional[PaddleOCR]:
@@ -468,6 +472,7 @@ class OCRService:
 
         return None, None, 0.0
     
+    @log_execution_time
     def process_id_card(
         self, 
         image: np.ndarray,
