@@ -6,9 +6,12 @@ Supports offline model loading via INSIGHTFACE_MODEL_DIR config.
 """
 import os
 import cv2
+import logging
 import numpy as np
 from typing import Optional, Tuple, List
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 try:
     from insightface.app import FaceAnalysis
@@ -18,6 +21,7 @@ except ImportError:
     FaceAnalysis = None
 
 from utils.config import FACE_DETECTION_MODEL, FACE_DETECTION_CTX, INSIGHTFACE_MODEL_DIR
+from utils.logging_config import log_execution_time
 
 
 class FaceExtractor:
@@ -58,6 +62,7 @@ class FaceExtractor:
                 ctx_id=FACE_DETECTION_CTX, 
                 det_size=(640, 640)
             )
+            logger.info(f"InsightFace model '{FACE_DETECTION_MODEL}' loaded successfully")
     
     def detect_faces(self, image: np.ndarray) -> List:
         """
@@ -87,6 +92,7 @@ class FaceExtractor:
         faces = self.detect_faces(image)
         
         if not faces:
+            logger.debug("No faces detected in image")
             return None
         
         # Find the largest face by bounding box area
@@ -167,6 +173,7 @@ class FaceExtractor:
         face = self.get_largest_face(image)
         
         if face is None:
+            logger.warning("No face detected on ID card image")
             return None, None
         
         face_img = self.extract_face_region(image, face)
@@ -187,6 +194,7 @@ def get_face_extractor() -> FaceExtractor:
     return _extractor
 
 
+@log_execution_time
 def extract_face(image: np.ndarray) -> Tuple[Optional[np.ndarray], Optional[np.ndarray]]:
     """
     Extract face from an image.
