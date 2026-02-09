@@ -27,6 +27,9 @@ API_KEYS = [k.strip() for k in os.environ.get("API_KEYS", "").split(",") if k.st
 LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO")
 LOG_JSON_FORMAT = os.environ.get("LOG_JSON_FORMAT", "true").lower() == "true"
 
+# Face matching threshold (0.0 to 1.0, default 0.7 = 70% similarity required)
+FACE_MATCH_THRESHOLD = float(os.environ.get("FACE_MATCH_THRESHOLD", "0.7"))
+
 # Ensure directories exist
 for dir_path in [ID_CARDS_DIR, SELFIES_DIR, PROCESSED_DIR]:
     dir_path.mkdir(parents=True, exist_ok=True)
