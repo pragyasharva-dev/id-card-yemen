@@ -21,6 +21,7 @@ Strategy:
 """
 
 import cv2
+import logging
 import numpy as np
 from typing import Dict, List, Optional
 
@@ -29,6 +30,8 @@ from services.passport_mrz_parser import parse_passport_mrz, extract_mrz_from_te
 from utils.image_manager import load_image
 from utils.ocr_utils import ocr_image_with_padding, ocr_to_single_string, ocr_mrz_line
 from utils.exceptions import ServiceError
+
+logger = logging.getLogger(__name__)
 
 
 # Passport YOLO class names (must match classes-yemen-passport.txt)
@@ -92,18 +95,18 @@ def extract_all_fields_yolo(image: np.ndarray) -> Dict[str, any]:
     
     service = get_layout_service()
     if not service.is_available("yemen_passport"):
-        print("YOLO passport model not available")
+        logger.warning("YOLO passport model not available")
         return result
     
     # Get all detections (return_all=True for multiple MRZ lines)
     fields = service.detect_layout(image, "yemen_passport", return_all=True)
     
     if not fields:
-        print("No fields detected by YOLO")
+        logger.debug("No fields detected by YOLO")
         return result
     
     result["detected_labels"] = list(fields.keys())
-    print(f"YOLO detected labels: {result['detected_labels']}")
+    logger.info(f"YOLO detected labels: {result['detected_labels']}")
     
     ocr = get_ocr_service()
     
@@ -156,7 +159,7 @@ def extract_all_fields_yolo(image: np.ndarray) -> Dict[str, any]:
             if text:
                 result[key] = text
         except Exception as e:
-            print(f"OCR failed for {label}: {e}")
+            logger.warning(f"OCR failed for {label}: {e}")
     
     return result
 
@@ -175,7 +178,7 @@ def extract_mrz_from_fields(mrz_fields: List, ocr) -> Optional[Dict]:
         Parsed MRZ data or None
     """
     if not mrz_fields or len(mrz_fields) < 2:
-        print(f"MRZ extraction requires 2 detections, got {len(mrz_fields) if mrz_fields else 0}")
+        logger.warning(f"MRZ extraction requires 2 detections, got {len(mrz_fields) if mrz_fields else 0}")
         return None
     
     # Sort by Y-coordinate (top to bottom)
@@ -189,20 +192,20 @@ def extract_mrz_from_fields(mrz_fields: List, ocr) -> Optional[Dict]:
     # OCR Line 1 (with MRZ-specific preprocessing: upscale + binarization)
     txt1, conf1 = ocr_mrz_line(line1_field.crop, ocr)
     txt1 = txt1.upper()
-    print(f"  MRZ Line 1 OCR: '{txt1}' (conf: {conf1:.2f})")
+    logger.debug(f"MRZ Line 1 OCR: '{txt1}' (conf: {conf1:.2f})")
     if txt1:
         mrz_lines.append(txt1)
     
     # OCR Line 2 (with MRZ-specific preprocessing: upscale + binarization)
     txt2, conf2 = ocr_mrz_line(line2_field.crop, ocr)
     txt2 = txt2.upper()
-    print(f"  MRZ Line 2 OCR: '{txt2}' (conf: {conf2:.2f})")
+    logger.debug(f"MRZ Line 2 OCR: '{txt2}' (conf: {conf2:.2f})")
     if txt2:
         mrz_lines.append(txt2)
     
     # Need both lines
     if len(mrz_lines) != 2:
-        print(f"MRZ OCR failed: got {len(mrz_lines)} lines, expected 2")
+        logger.warning(f"MRZ OCR failed: got {len(mrz_lines)} lines, expected 2")
         return None
     
     # Clean: ensure exactly 44 characters per line
@@ -327,8 +330,7 @@ def extract_passport_data(image_input) -> Dict:
     except ServiceError:
         raise  # Re-raise our custom exceptions
     except Exception as e:
-        import traceback
-        traceback.print_exc()
+        logger.exception("Passport extraction failed")
         raise ServiceError(
             f"Passport extraction failed: {str(e)}",
             code="PASSPORT_EXTRACTION_FAILED"
