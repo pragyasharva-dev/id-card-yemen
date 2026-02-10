@@ -56,7 +56,7 @@ class ServiceError(AppError):
     """
     General service-layer error (bad input, processing failure).
     
-    Use for: OCR failures, Face not found, Invalid MRZ, etc.
+    Use for: Generic service failures not covered by specific exceptions below.
     """
     def __init__(
         self,
@@ -65,6 +65,56 @@ class ServiceError(AppError):
         details: Optional[Dict[str, Any]] = None
     ):
         super().__init__(message, code, status_code=400, details=details)
+
+
+class ImageProcessingError(ServiceError):
+    """
+    Image is invalid, corrupt, or does not meet requirements.
+    
+    Use for: Corrupt uploads, images too small, unreadable formats.
+    """
+    def __init__(
+        self,
+        message: str,
+        details: Optional[Dict[str, Any]] = None
+    ):
+        super().__init__(message, code="IMAGE_PROCESSING_ERROR", details=details)
+
+
+class OCRExtractionError(ServiceError):
+    """
+    OCR failed to extract expected data from the image.
+    
+    Use for: No ID number found, text unreadable, layout detection failed.
+    """
+    def __init__(
+        self,
+        message: str,
+        field: Optional[str] = None,
+        details: Optional[Dict[str, Any]] = None
+    ):
+        _details = details or {}
+        if field:
+            _details["field"] = field
+        super().__init__(message, code="OCR_EXTRACTION_ERROR", details=_details)
+
+
+class FaceDetectionError(ServiceError):
+    """
+    Face could not be detected or extracted from image.
+    
+    Use for: No face in ID card, no face in selfie, multiple faces detected.
+    """
+    def __init__(
+        self,
+        message: str,
+        source: Optional[str] = None,
+        details: Optional[Dict[str, Any]] = None
+    ):
+        _details = details or {}
+        if source:
+            _details["source"] = source  # "id_card" or "selfie"
+        super().__init__(message, code="FACE_DETECTION_ERROR", details=_details)
 
 
 class ValidationError(AppError):
@@ -154,5 +204,28 @@ class ExternalServiceError(AppError):
             f"{service_name} error: {message}",
             "EXTERNAL_SERVICE_ERROR",
             status_code=502,
+            details=_details
+        )
+
+
+class DatabaseError(AppError):
+    """
+    Database connection or query failed.
+    
+    Use for: Connection timeouts, query failures, constraint violations.
+    """
+    def __init__(
+        self,
+        message: str,
+        operation: Optional[str] = None,
+        details: Optional[Dict[str, Any]] = None
+    ):
+        _details = details or {}
+        if operation:
+            _details["operation"] = operation  # "insert", "update", "query", "connect"
+        super().__init__(
+            f"Database error: {message}",
+            "DATABASE_ERROR",
+            status_code=500,
             details=_details
         )
