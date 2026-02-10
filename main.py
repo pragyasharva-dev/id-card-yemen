@@ -59,6 +59,7 @@ async def lifespan(app: FastAPI):
         logger.warning(f"Failed to preload face recognition model: {e}")
     
     # Pre-load YOLO layout detection models
+    # Pre-load YOLO layout detection models
     try:
         from services.layout_service import get_layout_service, is_layout_available
         logger.info("Loading YOLO layout detection models...")

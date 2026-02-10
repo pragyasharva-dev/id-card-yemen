@@ -1,11 +1,15 @@
 """e-KYC verification endpoints."""
 import cv2
-from fastapi import APIRouter, UploadFile, File
+from fastapi import APIRouter, UploadFile, File, Depends
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.schemas import VerifyRequest, VerifyResponse, LivenessResult
 from services.ocr_service import extract_id_from_image
 from services.face_recognition import verify_identity
-from services.database import get_id_card_db
+# from services.database import get_id_card_db  # Deprecated
+from services.db import get_db
+from services.data_service import save_document, save_verification
+from services.image_quality_service import check_id_quality, check_selfie_quality
 from utils.image_manager import load_image, save_image
 from utils.config import PROCESSED_DIR
 
@@ -16,7 +20,8 @@ router = APIRouter(tags=["Verification"])
 async def verify_identity_endpoint(
     id_card_front: UploadFile = File(..., description="ID card front side image"),
     selfie: UploadFile = File(..., description="Selfie image file"),
-    id_card_back: UploadFile = File(None, description="ID card back side image (optional)")
+    id_card_back: UploadFile = File(None, description="ID card back side image (optional)"),
+    db: AsyncSession = Depends(get_db)
 ):
     """
     e-KYC verification endpoint with optional front and back ID card support.
@@ -105,10 +110,9 @@ async def verify_identity_endpoint(
             )
         
         # AUTO-SAVE: Save extracted data to database after successful verification
+        
         if extracted_id:
             try:
-                db = get_id_card_db()
-                
                 # Convert images to JPEG bytes for blob storage
                 front_blob = None
                 back_blob = None
@@ -126,29 +130,172 @@ async def verify_identity_endpoint(
                     _, selfie_encoded = cv2.imencode('.jpg', selfie_image)
                     selfie_blob = selfie_encoded.tobytes()
                 
-                db_data = {
-                    "national_id": extracted_id,
-                    "name_arabic": parsed_data.get("name_arabic"),
-                    "name_english": parsed_data.get("name_english"),
-                    "date_of_birth": parsed_data.get("date_of_birth"),
-                    "place_of_birth": parsed_data.get("place_of_birth"),
-                    "gender": parsed_data.get("gender"),
-                    "issuance_date": parsed_data.get("issuance_date"),
-                    "expiry_date": parsed_data.get("expiry_date"),
-                    "front_image_blob": front_blob,
-                    "back_image_blob": back_blob,
-                    "selfie_image_blob": selfie_blob
+                # Prepare OCR data for JSONB storage (extract from layout_fields)
+                layout = front_ocr_result.get("layout_fields", {})
+                
+                # Extract name (Arabic text from 'name' field)
+                name_data = layout.get("name", {})
+                name_text = name_data.get("text", "") if name_data else ""
+                
+                # Extract dates
+                dob_data = layout.get("DOB", {})
+                dob_text = dob_data.get("text", "") if dob_data else ""
+                
+                issue_data = layout.get("issue_date", {})
+                issue_text = issue_data.get("text", "") if issue_data else ""
+                
+                expiry_data = layout.get("expiry_data", {}) or layout.get("expiry_date", {})
+                expiry_text = expiry_data.get("text", "") if expiry_data else ""
+                
+                # Update parsed_data for response
+                parsed_data = {
+                    "name_arabic": name_text if name_text else None,
+                    "date_of_birth": dob_text if dob_text else None,
+                    "issuance_date": issue_text if issue_text else None,
+                    "expiry_date": expiry_text if expiry_text else None,
+                    "place_of_birth": layout.get("POB", {}).get("text") if layout.get("POB") else None
                 }
                 
-                # Check if record exists, update or insert
-                existing = db.get_by_national_id(extracted_id)
-                if existing:
-                    db.update(extracted_id, db_data)
-                else:
-                    db.insert(db_data)
+                ocr_store_data = {
+                    "extracted_id": extracted_id,
+                    "id_type": id_type,
+                    "name_arabic": name_text if name_text else None,
+                    "name_english": None,  # Translation not available yet
+                    "date_of_birth": dob_text if dob_text else None,
+                    "place_of_birth": None,  # Not extracted by YOLO model
+                    "gender": None,  # Not extracted by YOLO model
+                    "issuance_date": issue_text if issue_text else None,
+                    "expiry_date": expiry_text if expiry_text else None,
+                    "confidence": front_ocr_result.get("confidence"),
+                    "extraction_method": front_ocr_result.get("extraction_method"),
+                    "layout_fields": layout,  # Store full layout for debugging
+                }
+
+                # Save Document (Upsert)
+                doc_record = await save_document(
+                    session=db,
+                    document_number=extracted_id,
+                    document_type=id_type or "unknown",
+                    ocr_data=ocr_store_data,
+                    front_image_data=front_blob,
+                    back_image_data=back_blob
+                )
+
+                # Save Verification Result
+                if doc_record:
+                    similarity = face_result.get("similarity_score")
+                    is_live = liveness_response.is_live if liveness_response else False
+                    
+                    # Determine status: verified only if face matches AND is live
+                    if similarity and similarity > 0.6 and is_live:
+                        status_val = "verified"
+                    else:
+                        status_val = "failed"
+
+                    # --- Calculate detailed quality and authenticity metrics ---
+
+                    # 1. Image Quality Metrics (from Quality Service)
+                    id_quality = check_id_quality(id_card_front_image)
+                    selfie_quality = check_selfie_quality(selfie_image)
+                    
+                    quality_metrics = {
+                        "id_card": {
+                            "score": id_quality.get("quality_score"),
+                            "face_visible": id_quality.get("face_visible"),
+                            "details": id_quality.get("details", {})
+                        },
+                        "selfie": {
+                            "score": selfie_quality.get("quality_score"),
+                            "face_visible": selfie_quality.get("face_visible"),
+                            "details": selfie_quality.get("details", {})
+                        }
+                    }
+
+                    # 2. Authenticity Checks (Derived from OCR + Quality + ID validation)
+                    ocr_confidence = float(front_ocr_result.get("confidence", 0.0))
+                    extraction_method = front_ocr_result.get("extraction_method", "unknown")
+                    detected_langs = front_ocr_result.get("detected_languages", [])
+                    
+                    # Document validation signals from quality check
+                    doc_validation = {
+                        "is_clear": id_quality.get("quality_score", 0) > 0.5,
+                        "face_detected_on_id": id_quality.get("face_visible", False),
+                        "sharpness_ok": id_quality.get("details", {}).get("sharpness", 0) > 50,
+                        "not_blurry": id_quality.get("details", {}).get("blur_score", 1) < 0.5,
+                    }
+                    
+                    # ID number validation
+                    id_validation = {
+                        "format_valid": extracted_id is not None and len(extracted_id) >= 8,
+                        "length_correct": extracted_id is not None and len(extracted_id) == 11,  # Yemen ID is 11 digits
+                        "is_numeric": extracted_id.isdigit() if extracted_id else False,
+                    }
+                    
+                    # Calculate overall authenticity score
+                    base_score = ocr_confidence if extraction_method == "yolo" else min(ocr_confidence * 0.8, 1.0)
+                    # Boost if document validation passes
+                    validation_boost = 0.1 if all(doc_validation.values()) else 0
+                    id_boost = 0.1 if all(id_validation.values()) else 0
+                    auth_score = min(base_score + validation_boost + id_boost, 1.0)
+                    
+                    auth_checks = {
+                        "ocr_confidence": ocr_confidence,
+                        "extraction_method": extraction_method,
+                        "expected_layout_found": extraction_method == "yolo",
+                        "languages_found": detected_langs,
+                        "document_validation": doc_validation,
+                        "id_validation": id_validation,
+                        "overall_authenticity_score": auth_score
+                    }
+
+                    # 3. Failure Reason (Structured)
+                    error_msg = face_result.get("error")
+                    failure_data = {}
+                    
+                    if error_msg:
+                        failure_data = {"message": error_msg, "code": "processing_error"}
+                    else:
+                        # Check for business logic failures
+                        failures = []
+                        details = {}
+                        
+                        if not liveness_response.is_live:
+                            failures.append("Liveness check failed")
+                            details["liveness_error"] = liveness_response.error
+                            
+                        if similarity is not None:
+                            if similarity <= 0.6:
+                                failures.append(f"Face mismatch ({similarity:.2f})")
+                            details["similarity_score"] = similarity
+                        else:
+                            failures.append("Face comparison failed (no score)")
+                            
+                        if failures:
+                            code = "multiple_failures" if len(failures) > 1 else ("liveness_failed" if "Liveness" in failures[0] else "face_mismatch")
+                            failure_data = {
+                                "message": "; ".join(failures), 
+                                "code": code,
+                                "details": details
+                            }
+
+                    # Save to database
+                    await save_verification(
+                        session=db,
+                        document_id=doc_record.id,
+                        status=status_val,
+                        similarity_score=similarity,
+                        selfie_image_data=selfie_blob,
+                        liveness_data=face_result.get("liveness") or {},
+                        image_quality_metrics=quality_metrics,
+                        authenticity_checks=auth_checks,
+                        failure_reason=failure_data
+                    )
+                    
             except Exception as db_error:
                 # Log error but don't fail the verification
                 print(f"Warning: Failed to save to database: {db_error}")
+                import traceback
+                traceback.print_exc()
         
         return VerifyResponse(
             success=True,
@@ -169,6 +316,8 @@ async def verify_identity_endpoint(
         )
         
     except Exception as e:
+        import traceback
+        traceback.print_exc()  # Print full traceback to terminal
         return VerifyResponse(
             success=False,
             extracted_id=None,
@@ -189,7 +338,10 @@ async def verify_identity_endpoint(
 
 
 @router.post("/verify-json", response_model=VerifyResponse)
-async def verify_identity_json(request: VerifyRequest):
+async def verify_identity_json(
+    request: VerifyRequest,
+    db: AsyncSession = Depends(get_db)
+):
     """
     e-KYC verification using JSON body with ID number and selfie path/base64.
     
@@ -207,7 +359,7 @@ async def verify_identity_json(request: VerifyRequest):
             raise ValueError("Either selfie_path or selfie_base64 is required")
         
         # Search for ID card in database
-        search_result = search_id_card_by_number(request.id_number)
+        search_result = await search_id_card_by_number(db, request.id_number)
         
         if search_result is None:
             return VerifyResponse(

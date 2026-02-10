@@ -70,6 +70,8 @@ class LayoutService:
     
     _instance: Optional['LayoutService'] = None
     _initialized: bool = False
+    _init_error: Optional[str] = None
+    _ultralytics_available: bool = False
     
     def __new__(cls):
         """Singleton pattern."""
@@ -83,21 +85,27 @@ class LayoutService:
             return
             
         self.models: Dict[str, 'YOLO'] = {}
-        self.model_classes: Dict[str, List[str]] = {}  # Dynamic class names per model
+        self.model_classes: Dict[str, List[str]] = {}
         self.base_path = Path(__file__).parent.parent / "models"
         
+        LayoutService._ultralytics_available = ULTRALYTICS_AVAILABLE
+        
         if not ULTRALYTICS_AVAILABLE:
-            logger.warning("YOLO layout detection disabled - ultralytics not installed")
+            msg = "YOLO layout detection disabled - ultralytics not installed"
+            print(f"[DEBUG] {msg}")
+            LayoutService._init_error = msg
             LayoutService._initialized = True
             return
         
         # Load available models
         # Yemen National ID (North Yemen)
+        logger.info(f"LayoutService initializing. Base path: {self.base_path}")
         self._load_model("yemen_id_front", self.base_path / "north-yemen-front.pt")
         self._load_model("yemen_id_back", self.base_path / "north-yemen-back.pt")
         # Yemen Passport
         self._load_model("yemen_passport", self.base_path / "yemen-passport.pt")
         
+        logger.info(f"LayoutService initialized. Cached models: {list(self.models.keys())}")
         LayoutService._initialized = True
         
     def _load_model(self, model_key: str, model_path: Path) -> None:
@@ -129,6 +137,17 @@ class LayoutService:
     def is_available(self, model_key: str = "yemen_id_front") -> bool:
         """Check if a specific model is available."""
         return model_key in self.models
+    
+    def get_status(self) -> Dict:
+        """Return diagnostic information about the service."""
+        return {
+            "initialized": LayoutService._initialized,
+            "ultralytics_available": LayoutService._ultralytics_available,
+            "error": LayoutService._init_error,
+            "loaded_models": list(self.models.keys()),
+            "base_path": str(self.base_path),
+            "base_path_exists": self.base_path.exists()
+        }
     
     def detect_layout(
         self, 
@@ -180,10 +199,14 @@ class LayoutService:
                 verbose=False
             )
             
+            logger.info(f"YOLO inference ran. Results found: {len(results) if results else 0}")
+            
             if not results or len(results) == 0:
+                logger.warning("YOLO inference returned no results object")
                 return {}
             
             det_result = results[0]
+            logger.info(f"YOLO detections: {len(det_result.boxes)}")
             fields = {}  # Type depends on return_all
             
             h, w = image.shape[:2]

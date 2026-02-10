@@ -369,7 +369,8 @@ class OCRService:
                     'score': score,
                     'ocr_lang': lang
                 })
-        
+
+
         return extracted
     
     def extract_text_multilingual(

@@ -134,7 +134,16 @@ DOC_TEXTURE_MAX = 1.0  # Cap at 1.0; originals with security printing/holograms 
 DOC_HALFTONE_MAX = 0.35  # FFT halftone score above this = suspected print/copy, reject
 # When texture is high (>= this), require mean saturation >= DOC_MIN_SATURATION_FOR_HIGH_TEXTURE
 DOC_HIGH_TEXTURE_THRESHOLD = 0.92
+
 DOC_MIN_SATURATION_FOR_HIGH_TEXTURE = 0.06  # Reject only very flat prints; originals can be muted (lighting/passport design)
+
+# Database Settings
+import os
+# Default to local PostgreSQL instance
+DATABASE_URL = os.getenv(
+    "DATABASE_URL", 
+    "postgresql+asyncpg://postgres:12345@localhost:5432/id_card_system"
+)
 
 
 
