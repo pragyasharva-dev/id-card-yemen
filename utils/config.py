@@ -95,7 +95,7 @@ LIVENESS_TEXTURE_THRESHOLD = 0.08  # 8% - Texture variance
 LIVENESS_COLOR_THRESHOLD = 0.35  # 35% - Skin tone detection
 LIVENESS_SHARPNESS_THRESHOLD = 0.02  # 2% - Image sharpness
 LIVENESS_MOIRE_THRESHOLD = 0.20  # 20% - Moiré/reflection detection
-LIVENESS_ML_THRESHOLD = 0.70  # 70% - ML model confidence
+LIVENESS_ML_THRESHOLD = 0.60  # 60% - ML model confidence
 LIVENESS_SIZE_THRESHOLD = 0.20  # 20% - Minimum image size
 LIVENESS_THRESHOLD = 0.5  # Overall liveness confidence threshold (0-1)
 
