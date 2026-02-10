@@ -130,18 +130,45 @@ async def verify_identity_endpoint(
                     _, selfie_encoded = cv2.imencode('.jpg', selfie_image)
                     selfie_blob = selfie_encoded.tobytes()
                 
-                # Prepare OCR data for JSONB storage
+                # Prepare OCR data for JSONB storage (extract from layout_fields)
+                layout = front_ocr_result.get("layout_fields", {})
+                
+                # Extract name (Arabic text from 'name' field)
+                name_data = layout.get("name", {})
+                name_text = name_data.get("text", "") if name_data else ""
+                
+                # Extract dates
+                dob_data = layout.get("DOB", {})
+                dob_text = dob_data.get("text", "") if dob_data else ""
+                
+                issue_data = layout.get("issue_date", {})
+                issue_text = issue_data.get("text", "") if issue_data else ""
+                
+                expiry_data = layout.get("expiry_data", {}) or layout.get("expiry_date", {})
+                expiry_text = expiry_data.get("text", "") if expiry_data else ""
+                
+                # Update parsed_data for response
+                parsed_data = {
+                    "name_arabic": name_text if name_text else None,
+                    "date_of_birth": dob_text if dob_text else None,
+                    "issuance_date": issue_text if issue_text else None,
+                    "expiry_date": expiry_text if expiry_text else None,
+                    "place_of_birth": layout.get("POB", {}).get("text") if layout.get("POB") else None
+                }
+                
                 ocr_store_data = {
                     "extracted_id": extracted_id,
                     "id_type": id_type,
-                    "name_arabic": parsed_data.get("name_arabic"),
-                    "name_english": parsed_data.get("name_english"),
-                    "date_of_birth": parsed_data.get("date_of_birth"),
-                    "place_of_birth": parsed_data.get("place_of_birth"),
-                    "gender": parsed_data.get("gender"),
-                    "issuance_date": parsed_data.get("issuance_date"),
-                    "expiry_date": parsed_data.get("expiry_date"),
-                    # Store original OCR raw text if available in future
+                    "name_arabic": name_text if name_text else None,
+                    "name_english": None,  # Translation not available yet
+                    "date_of_birth": dob_text if dob_text else None,
+                    "place_of_birth": None,  # Not extracted by YOLO model
+                    "gender": None,  # Not extracted by YOLO model
+                    "issuance_date": issue_text if issue_text else None,
+                    "expiry_date": expiry_text if expiry_text else None,
+                    "confidence": front_ocr_result.get("confidence"),
+                    "extraction_method": front_ocr_result.get("extraction_method"),
+                    "layout_fields": layout,  # Store full layout for debugging
                 }
 
                 # Save Document (Upsert)
@@ -157,7 +184,14 @@ async def verify_identity_endpoint(
                 # Save Verification Result
                 if doc_record:
                     similarity = face_result.get("similarity_score")
-                    status_val = "verified" if similarity and similarity > 0.6 else "failed" # Simple threshold logic
+                    is_live = liveness_response.is_live if liveness_response else False
+                    
+                    # Determine status: verified only if face matches AND is live
+                    if similarity and similarity > 0.6 and is_live:
+                        status_val = "verified"
+                    else:
+                        status_val = "failed"
+
                     # --- Calculate detailed quality and authenticity metrics ---
 
                     # 1. Image Quality Metrics (from Quality Service)
@@ -177,24 +211,72 @@ async def verify_identity_endpoint(
                         }
                     }
 
-                    # 2. Authenticity Checks (Derived from OCR results)
+                    # 2. Authenticity Checks (Derived from OCR + Quality + ID validation)
                     ocr_confidence = float(front_ocr_result.get("confidence", 0.0))
                     extraction_method = front_ocr_result.get("extraction_method", "unknown")
                     detected_langs = front_ocr_result.get("detected_languages", [])
                     
-                    auth_score = ocr_confidence if extraction_method == "yolo" else min(ocr_confidence * 0.8, 1.0)
+                    # Document validation signals from quality check
+                    doc_validation = {
+                        "is_clear": id_quality.get("quality_score", 0) > 0.5,
+                        "face_detected_on_id": id_quality.get("face_visible", False),
+                        "sharpness_ok": id_quality.get("details", {}).get("sharpness", 0) > 50,
+                        "not_blurry": id_quality.get("details", {}).get("blur_score", 1) < 0.5,
+                    }
+                    
+                    # ID number validation
+                    id_validation = {
+                        "format_valid": extracted_id is not None and len(extracted_id) >= 8,
+                        "length_correct": extracted_id is not None and len(extracted_id) == 11,  # Yemen ID is 11 digits
+                        "is_numeric": extracted_id.isdigit() if extracted_id else False,
+                    }
+                    
+                    # Calculate overall authenticity score
+                    base_score = ocr_confidence if extraction_method == "yolo" else min(ocr_confidence * 0.8, 1.0)
+                    # Boost if document validation passes
+                    validation_boost = 0.1 if all(doc_validation.values()) else 0
+                    id_boost = 0.1 if all(id_validation.values()) else 0
+                    auth_score = min(base_score + validation_boost + id_boost, 1.0)
                     
                     auth_checks = {
                         "ocr_confidence": ocr_confidence,
                         "extraction_method": extraction_method,
                         "expected_layout_found": extraction_method == "yolo",
                         "languages_found": detected_langs,
+                        "document_validation": doc_validation,
+                        "id_validation": id_validation,
                         "overall_authenticity_score": auth_score
                     }
 
                     # 3. Failure Reason (Structured)
                     error_msg = face_result.get("error")
-                    failure_data = {"message": error_msg, "code": "processing_error"} if error_msg else {}
+                    failure_data = {}
+                    
+                    if error_msg:
+                        failure_data = {"message": error_msg, "code": "processing_error"}
+                    else:
+                        # Check for business logic failures
+                        failures = []
+                        details = {}
+                        
+                        if not liveness_response.is_live:
+                            failures.append("Liveness check failed")
+                            details["liveness_error"] = liveness_response.error
+                            
+                        if similarity is not None:
+                            if similarity <= 0.6:
+                                failures.append(f"Face mismatch ({similarity:.2f})")
+                            details["similarity_score"] = similarity
+                        else:
+                            failures.append("Face comparison failed (no score)")
+                            
+                        if failures:
+                            code = "multiple_failures" if len(failures) > 1 else ("liveness_failed" if "Liveness" in failures[0] else "face_mismatch")
+                            failure_data = {
+                                "message": "; ".join(failures), 
+                                "code": code,
+                                "details": details
+                            }
 
                     # Save to database
                     await save_verification(
@@ -234,6 +316,8 @@ async def verify_identity_endpoint(
         )
         
     except Exception as e:
+        import traceback
+        traceback.print_exc()  # Print full traceback to terminal
         return VerifyResponse(
             success=False,
             extracted_id=None,

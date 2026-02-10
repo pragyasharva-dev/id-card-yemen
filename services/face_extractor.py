@@ -46,16 +46,18 @@ class FaceExtractor:
         
         if FaceExtractor._app is None:
             # Check for local models directory (offline mode)
-            root = None
+            # Check for local models directory (offline mode)
+            kwargs = {}
             if INSIGHTFACE_MODEL_DIR.exists():
                 root = str(INSIGHTFACE_MODEL_DIR)
                 # Set environment variable for InsightFace to find models
                 os.environ["INSIGHTFACE_HOME"] = root
+                kwargs["root"] = root
             
             FaceExtractor._app = FaceAnalysis(
                 name=FACE_DETECTION_MODEL,
-                root=root,
-                providers=['CPUExecutionProvider']
+                providers=['CPUExecutionProvider'],
+                **kwargs
             )
             # Prepare for different image sizes
             FaceExtractor._app.prepare(

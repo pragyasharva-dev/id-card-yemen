@@ -493,6 +493,8 @@ async def verify_identity_endpoint(
         )
         
     except Exception as e:
+        import traceback
+        traceback.print_exc()  # Print full traceback to terminal
         return VerifyResponse(
             success=False,
             extracted_id=None,
