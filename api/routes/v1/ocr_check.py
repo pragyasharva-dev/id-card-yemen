@@ -24,12 +24,21 @@ from models.v1_schemas import (
     DocumentAuthenticity,
     ImageQuality,
     ImageQualityItem,
+    DocumentVerificationScore,
+    DataMatchScore,
 )
 from services.ocr_service import extract_id_from_image
+from services.id_card_parser import parse_yemen_id_card
 from services.field_comparison_service import validate_form_vs_ocr
 from services.translation_service import hybrid_name_convert
 from services.image_quality_service import check_id_quality
+from services.image_quality_service import check_id_quality
+from services.image_quality_service import check_id_quality
 from utils.image_manager import load_image
+from services.scoring_service import (
+    calculate_document_verification_score,
+    calculate_data_match_score
+)
 
 logger = logging.getLogger(__name__)
 
@@ -115,18 +124,43 @@ async def ocr_check_endpoint(
         if "error" in ocr_result:
             errors.append(f"OCR Error: {ocr_result['error']}")
         
-        # Get OCR confidence (average)
+        # Parse ID card to get structured fields with per-field confidences
+        parsed = parse_yemen_id_card(ocr_result)
+        field_conf = parsed.get("field_confidences", {})
+        
+        # Get OCR confidence (average for fallback)
         avg_confidence = ocr_result.get("confidence", 0.8)
         
-        # Build OCRData with field-level confidence
+        # Build OCRData with per-field confidence scores
         ocr_data = OCRData(
-            first_name=OCRFieldData(value=ocr_result.get("name_english", "").split()[0] if ocr_result.get("name_english") else None, confidence=avg_confidence) if ocr_result.get("name_english") else None,
-            full_name=OCRFieldData(value=ocr_result.get("full_name") or ocr_result.get("name_english"), confidence=avg_confidence),
-            document_number=OCRFieldData(value=ocr_result.get("extracted_id"), confidence=avg_confidence) if ocr_result.get("extracted_id") else None,
-            document_issue_date=OCRFieldData(value=ocr_result.get("issue_date") or ocr_result.get("issuance_date"), confidence=avg_confidence) if ocr_result.get("issue_date") or ocr_result.get("issuance_date") else None,
-            document_expiry_date=OCRFieldData(value=ocr_result.get("expiry_date"), confidence=avg_confidence) if ocr_result.get("expiry_date") else None,
-            date_of_birth=OCRFieldData(value=ocr_result.get("date_of_birth"), confidence=avg_confidence) if ocr_result.get("date_of_birth") else None,
-            gender=OCRFieldData(value=ocr_result.get("gender"), confidence=avg_confidence) if ocr_result.get("gender") else None,
+            first_name=OCRFieldData(
+                value=parsed.get("name_english", "").split()[0] if parsed.get("name_english") else None,
+                confidence=field_conf.get("name_english", avg_confidence)
+            ) if parsed.get("name_english") else None,
+            full_name=OCRFieldData(
+                value=parsed.get("name_english"),
+                confidence=field_conf.get("name_english", avg_confidence)
+            ),
+            document_number=OCRFieldData(
+                value=parsed.get("id_number"),
+                confidence=field_conf.get("id_number", avg_confidence)
+            ) if parsed.get("id_number") else None,
+            document_issue_date=OCRFieldData(
+                value=parsed.get("issuance_date"),
+                confidence=field_conf.get("issuance_date", avg_confidence)
+            ) if parsed.get("issuance_date") else None,
+            document_expiry_date=OCRFieldData(
+                value=parsed.get("expiry_date"),
+                confidence=field_conf.get("expiry_date", avg_confidence)
+            ) if parsed.get("expiry_date") else None,
+            date_of_birth=OCRFieldData(
+                value=parsed.get("date_of_birth"),
+                confidence=field_conf.get("date_of_birth", avg_confidence)
+            ) if parsed.get("date_of_birth") else None,
+            gender=OCRFieldData(
+                value=parsed.get("gender"),
+                confidence=field_conf.get("gender", avg_confidence)
+            ) if parsed.get("gender") else None,
         )
         
         # Transliterate Arabic names
@@ -136,7 +170,7 @@ async def ocr_check_endpoint(
         transliterated_family = None
         transliterated_full = None
         
-        arabic_name = ocr_result.get("name_arabic")
+        arabic_name = parsed.get("name_arabic")
         if arabic_name:
             try:
                 translation_result = await run_in_threadpool(hybrid_name_convert, arabic_name)
@@ -166,12 +200,12 @@ async def ocr_check_endpoint(
         }
         
         ocr_data_for_comparison = {
-            "id_number": ocr_result.get("extracted_id"),
-            "full_name": ocr_result.get("full_name") or ocr_result.get("name_english"),
-            "date_of_birth": ocr_result.get("date_of_birth"),
-            "gender": ocr_result.get("gender"),
-            "issue_date": ocr_result.get("issue_date") or ocr_result.get("issuance_date"),
-            "expiry_date": ocr_result.get("expiry_date"),
+            "id_number": parsed.get("id_number"),
+            "full_name": parsed.get("name_english"),
+            "date_of_birth": parsed.get("date_of_birth"),
+            "gender": parsed.get("gender"),
+            "issue_date": parsed.get("issuance_date"),
+            "expiry_date": parsed.get("expiry_date"),
         }
         
         comparison_result = await run_in_threadpool(
@@ -222,6 +256,17 @@ async def ocr_check_endpoint(
             back_image=back_quality
         )
         
+        # Calculate Document Verification Score
+        doc_verification_score = calculate_document_verification_score(
+            quality_score=quality_score,
+            field_confidences=field_conf,
+            is_national_id=(meta.document_type == "NATIONAL_ID"),
+            has_back_image=bool(back_image)
+        )
+        
+        # Calculate Data Match Score
+        data_match_score = calculate_data_match_score(data_comparison)
+        
         return OCRCheckResponse(
             transaction_id=transaction_id,
             transliterated_first_name=transliterated_first,
@@ -233,7 +278,9 @@ async def ocr_check_endpoint(
             data_comparison=data_comparison,
             document_authenticity=document_authenticity,
             image_quality=image_quality,
-            errors=errors
+            errors=errors,
+            document_verification_score=doc_verification_score,
+            data_match_score=data_match_score,
         )
         
     except Exception as e:
