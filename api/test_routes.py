@@ -981,3 +981,118 @@ async def verify_id_card_endpoint(
         import traceback
         response["traceback"] = traceback.format_exc()
         return response
+
+
+@test_router.post("/analyze-id-image")
+async def analyze_id_image_endpoint(
+    image: UploadFile = File(..., description="ID card image (front side)"),
+    back_image: UploadFile = File(None, description="ID card image (back side) - Optional"),
+):
+    """
+    Simple OCR analysis endpoint — image(s) in, field-wise OCR out.
+
+    Uses the full YOLO + OCR pipeline (layout detection → targeted OCR)
+    and then parses the result into structured fields.
+
+    No user data or score matching is performed.
+
+    Returns:
+        - extraction_method: "yolo" or "fallback"
+        - layout_fields: raw front YOLO-detected regions
+        - back_layout_fields: raw back YOLO-detected regions (if back image provided)
+        - parsed_fields: structured output (name, DOB, ID number, etc.) merged from possibly both sides
+        - raw_ocr: all extracted text lines from front
+        - back_raw_ocr: all extracted text lines from back (if provided)
+    """
+    from services.id_card_parser import parse_yemen_id_card
+
+    try:
+        # Front image processing
+        image_bytes = await image.read()
+        front_img = load_image(image_bytes)
+
+        if front_img is None:
+            return {"success": False, "error": "Could not decode front image"}
+
+        # Run YOLO + OCR pipeline on front
+        front_ocr_result = await run_in_threadpool(extract_id_from_image, front_img)
+        
+        # Back image processing (optional)
+        back_ocr_result = None
+        if back_image:
+            back_bytes = await back_image.read()
+            back_img = load_image(back_bytes)
+            if back_img is not None:
+                # Use "back" side hint for YOLO if needed, although extract_id_from_image auto-detects or defaults.
+                # Actually extract_id_from_image takes 'side' arg in 'process_id_card' but the wrapper doesn't expose it.
+                # Use lower-level service call to specify side="back" for better YOLO model selection.
+                from services.ocr_service import get_ocr_service
+                service = get_ocr_service()
+                back_ocr_result = await run_in_threadpool(service.process_id_card, back_img, side="back")
+
+        # Parse into structured fields (merging front + back)
+        parsed = parse_yemen_id_card(front_ocr_result, back_ocr_result)
+
+        # Build clean layout_fields dicts
+        layout_fields = {}
+        for label, data in front_ocr_result.get("layout_fields", {}).items():
+            layout_fields[label] = {
+                k: v for k, v in data.items() if k != "crop"
+            }
+            
+        back_layout_fields = {}
+        if back_ocr_result:
+            for label, data in back_ocr_result.get("layout_fields", {}).items():
+                back_layout_fields[label] = {
+                    k: v for k, v in data.items() if k != "crop"
+                }
+
+        response = {
+            "success": True,
+            "extraction_method": front_ocr_result.get("extraction_method", "unknown"),
+            "layout_fields": layout_fields,
+            "parsed_fields": {
+                "id_number": parsed.get("id_number"),
+                "id_type": parsed.get("id_type"),
+                "name_arabic": parsed.get("name_arabic"),
+                "name_english": parsed.get("name_english"),
+                "date_of_birth": parsed.get("date_of_birth"),
+                "gender": parsed.get("gender"),
+                "place_of_birth": parsed.get("place_of_birth"),
+                "issuance_date": parsed.get("issuance_date"),
+                "expiry_date": parsed.get("expiry_date"),
+                "field_confidences": parsed.get("field_confidences", {}),
+            },
+            "raw_ocr": [
+                {
+                    "text": r.get("text"),
+                    "confidence": r.get("score"),
+                    "language": r.get("detected_language") or r.get("ocr_lang"),
+                    "field_label": r.get("field_label"),
+                }
+                for r in front_ocr_result.get("text_results", [])
+            ],
+        }
+        
+        if back_ocr_result:
+            response["back_extraction_method"] = back_ocr_result.get("extraction_method", "unknown")
+            response["back_layout_fields"] = back_layout_fields
+            response["back_raw_ocr"] = [
+                {
+                    "text": r.get("text"),
+                    "confidence": r.get("score"),
+                    "language": r.get("detected_language") or r.get("ocr_lang"),
+                    "field_label": r.get("field_label"),
+                }
+                for r in back_ocr_result.get("text_results", [])
+            ]
+            
+        return response
+
+    except Exception as e:
+        import traceback
+        return {
+            "success": False,
+            "error": str(e),
+            "traceback": traceback.format_exc(),
+        }

@@ -230,8 +230,16 @@ async def ocr_check_endpoint(
             ))
         
         # Assess document quality / authenticity
-        quality_result = await run_in_threadpool(check_id_quality, front_image)
-        quality_score = quality_result.get("overall_quality", 0.0)
+        try:
+            # Assess document quality / authenticity
+            quality_result = await run_in_threadpool(check_id_quality, front_image)
+            quality_score = quality_result.get("overall_quality", 0.0)
+            front_issues = quality_result.get("issues", [])
+        except Exception as e:
+            logger.warning(f"Quality check failed for front image: {e}")
+            quality_score = 0.0
+            front_issues = [str(e)]
+            errors.append(f"Front Image Quality Check: {str(e)}")
         
         document_authenticity = DocumentAuthenticity(
             score=quality_score,
@@ -241,15 +249,26 @@ async def ocr_check_endpoint(
         # Image quality
         front_quality = ImageQualityItem(
             score=quality_score,
-            failure_reasons=quality_result.get("issues", [])
+            failure_reasons=front_issues
         )
         back_quality = None
-        if back_image:
-            back_result = await run_in_threadpool(check_id_quality, back_image)
-            back_quality = ImageQualityItem(
-                score=back_result.get("overall_quality", 0.0),
-                failure_reasons=back_result.get("issues", [])
-            )
+        if back_image is not None:
+            try:
+                back_result = await run_in_threadpool(check_id_quality, back_image)
+                back_score = back_result.get("overall_quality", 0.0)
+                back_issues = back_result.get("issues", [])
+                
+                back_quality = ImageQualityItem(
+                    score=back_score,
+                    failure_reasons=back_issues
+                )
+            except Exception as e:
+                logger.warning(f"Quality check failed for back image: {e}")
+                back_quality = ImageQualityItem(
+                    score=0.0,
+                    failure_reasons=[str(e)]
+                )
+                errors.append(f"Back Image Quality Check: {str(e)}")
         
         image_quality = ImageQuality(
             front_image=front_quality,
@@ -261,7 +280,7 @@ async def ocr_check_endpoint(
             quality_score=quality_score,
             field_confidences=field_conf,
             is_national_id=(meta.document_type == "NATIONAL_ID"),
-            has_back_image=bool(back_image)
+            has_back_image=(back_image is not None)
         )
         
         # Calculate Data Match Score

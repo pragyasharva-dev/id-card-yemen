@@ -419,44 +419,191 @@ def parse_yemen_id_card(
     Returns:
         Dictionary with structured ID card data including field_confidences
     """
-    # Extract from FRONT card
-    front_texts = front_ocr_result.get("all_texts", [])
-    front_text_results = front_ocr_result.get("text_results", [])
+    # =====================================================================
+    # YOLO fast path: extract directly from layout_fields when available
+    # =====================================================================
+    layout_fields = front_ocr_result.get("layout_fields", {})
+    extraction_method = front_ocr_result.get("extraction_method", "fallback")
     
-    # Filter out organization/government names from front
-    filtered_front_results = filter_organization_names(front_text_results)
-    
-    # Extract fields from FRONT (with confidence)
-    arabic_name, english_name, arabic_conf, english_conf = extract_name_from_texts(front_texts, filtered_front_results)
-    date_of_birth = extract_date_of_birth(front_texts)
-    gender = extract_gender_from_texts(front_texts, front_text_results)
-    place_of_birth = extract_place_of_birth(front_texts)
-    
-    # Get ID number confidence from front_ocr_result
-    id_number_conf = float(front_ocr_result.get("confidence", 0.0))
-    
-    # Initialize back card fields
-    issuance_date = None
-    expiry_date = None
-    
-    # Extract from BACK card if provided
-    if back_ocr_result:
-        back_texts = back_ocr_result.get("all_texts", [])
+    if extraction_method == "yolo" and layout_fields:
+        # Map YOLO labels → structured fields
+        name_text = layout_fields.get("name", {}).get("text", "")
+        dob_text = layout_fields.get("DOB", {}).get("text", "")
+        pob_text = layout_fields.get("POB", {}).get("text", "")
+        id_text = layout_fields.get("unique_id", {}).get("text", "")
+        issue_text = layout_fields.get("issue_date", {}).get("text", "")
+        expiry_text = layout_fields.get("expiry_data", {}).get("text", "")
         
-        # Extract fields from BACK
-        issuance_date, expiry_date = extract_dates_from_texts(back_texts)
+        # Confidences from YOLO detection
+        name_conf = float(layout_fields.get("name", {}).get("confidence", 0.0))
+        dob_conf = float(layout_fields.get("DOB", {}).get("confidence", 0.0))
+        pob_conf = float(layout_fields.get("POB", {}).get("confidence", 0.0))
+        id_conf = float(layout_fields.get("unique_id", {}).get("confidence", 0.0))
+        issue_conf = float(layout_fields.get("issue_date", {}).get("confidence", 0.0))
+        expiry_conf = float(layout_fields.get("expiry_data", {}).get("confidence", 0.0))
+        
+        # Name: the YOLO name field is Arabic
+        arabic_name = name_text.strip() if name_text.strip() else None
+        english_name = None
+        if arabic_name:
+            try:
+                english_name = translate_text(arabic_name, source="ar", target="en")
+            except Exception as e:
+                logger.warning(f"Translation failed for YOLO name '{arabic_name}': {e}")
+        
+        # DOB: normalise to YYYY-MM-DD
+        date_of_birth = None
+        if dob_text.strip():
+            try:
+                # Handle YYYY/MM/DD or YYYY-MM-DD
+                cleaned = dob_text.strip().replace("/", "-")
+                parts = cleaned.split("-")
+                if len(parts) == 3:
+                    date_of_birth = format_date(
+                        datetime(int(parts[0]), int(parts[1]), int(parts[2]))
+                    )
+            except (ValueError, IndexError):
+                date_of_birth = dob_text.strip()
+        
+        # Place of birth: translate Arabic → English
+        place_of_birth = None
+        if pob_text.strip():
+            try:
+                place_of_birth = translate_text(pob_text.strip(), source="ar", target="en")
+            except Exception as e:
+                logger.warning(f"POB translation failed: {e}")
+                place_of_birth = pob_text.strip()
+        
+        # Gender: derive from ID number (Yemen national IDs encode gender)
+        gender = None
+        id_number = id_text.strip() if id_text.strip() else front_ocr_result.get("extracted_id")
+        
+        # Logic from YemenNationalIDForm: 4th digit (index 3) indicates gender
+        # 1 = Male, 0 = Female
+        if id_number and len(id_number) >= 4 and id_number.isdigit():
+            try:
+                fourth_digit = int(id_number[3])
+                if fourth_digit == 1:
+                    gender = "Male"
+                elif fourth_digit == 0:
+                    gender = "Female"
+            except (ValueError, IndexError):
+                pass  # Keep as None if parsing fails
+        
+        # Issue / Expiry dates (may come from back card YOLO)
+        issuance_date = None
+        if issue_text.strip():
+            try:
+                cleaned = issue_text.strip().replace("/", "-")
+                parts = cleaned.split("-")
+                if len(parts) == 3:
+                    issuance_date = format_date(
+                        datetime(int(parts[0]), int(parts[1]), int(parts[2]))
+                    )
+            except (ValueError, IndexError):
+                issuance_date = issue_text.strip()
+        
+        expiry_date = None
+        if expiry_text.strip():
+            try:
+                cleaned = expiry_text.strip().replace("/", "-")
+                parts = cleaned.split("-")
+                if len(parts) == 3:
+                    expiry_date = format_date(
+                        datetime(int(parts[0]), int(parts[1]), int(parts[2]))
+                    )
+            except (ValueError, IndexError):
+                expiry_date = expiry_text.strip()
+        
+        # Also check back card layout_fields if provided
+        if back_ocr_result and back_ocr_result.get("extraction_method") == "yolo":
+            back_layout = back_ocr_result.get("layout_fields", {})
+            if not issuance_date:
+                back_issue = back_layout.get("issue_date", {}).get("text", "").strip()
+                if back_issue:
+                    try:
+                        cleaned = back_issue.replace("/", "-")
+                        parts = cleaned.split("-")
+                        if len(parts) == 3:
+                            issuance_date = format_date(
+                                datetime(int(parts[0]), int(parts[1]), int(parts[2]))
+                            )
+                    except (ValueError, IndexError):
+                        issuance_date = back_issue
+                    issue_conf = float(back_layout.get("issue_date", {}).get("confidence", 0.0))
+            if not expiry_date:
+                back_expiry = back_layout.get("expiry_data", {}).get("text", "").strip()
+                if back_expiry:
+                    try:
+                        cleaned = back_expiry.replace("/", "-")
+                        parts = cleaned.split("-")
+                        if len(parts) == 3:
+                            expiry_date = format_date(
+                                datetime(int(parts[0]), int(parts[1]), int(parts[2]))
+                            )
+                    except (ValueError, IndexError):
+                        expiry_date = back_expiry
+                    expiry_conf = float(back_layout.get("expiry_data", {}).get("confidence", 0.0))
+        elif back_ocr_result:
+            # Back card used fallback OCR — use heuristic date extraction
+            back_texts = back_ocr_result.get("all_texts", [])
+            if back_texts:
+                fb_issue, fb_expiry = extract_dates_from_texts(back_texts)
+                if not issuance_date and fb_issue:
+                    issuance_date = fb_issue
+                if not expiry_date and fb_expiry:
+                    expiry_date = fb_expiry
+        
+        field_confidences = {
+            "name_arabic": name_conf if arabic_name else 0.0,
+            "name_english": (name_conf * 0.9) if english_name else 0.0,
+            "date_of_birth": dob_conf if date_of_birth else 0.0,
+            "gender": 0.0,
+            "place_of_birth": pob_conf if place_of_birth else 0.0,
+            "issuance_date": issue_conf if issuance_date else 0.0,
+            "expiry_date": expiry_conf if expiry_date else 0.0,
+            "id_number": id_conf if id_number else 0.0,
+        }
+        
+        return {
+            "name_arabic": arabic_name,
+            "name_english": english_name,
+            "date_of_birth": date_of_birth,
+            "gender": gender,
+            "place_of_birth": place_of_birth,
+            "issuance_date": issuance_date,
+            "expiry_date": expiry_date,
+            "id_number": id_number or front_ocr_result.get("extracted_id"),
+            "id_type": front_ocr_result.get("id_type"),
+            "field_confidences": field_confidences,
+        }
     
-    # Build field_confidences dictionary
-    # Default confidence for date fields is 0.8 if extracted, 0.0 otherwise
+    # =====================================================================
+    # Fallback path: NO HEURISTICS (as requested)
+    # =====================================================================
+    # If YOLO failed or didn't run, we do NOT attempt to parse raw text.
+    # We just return the ID number if it was extracted by the regex fallback in OCR service.
+    
+    # Initialize variables that would have been set by the fallback
+    if 'arabic_name' not in locals(): arabic_name = None
+    if 'english_name' not in locals(): english_name = None
+    if 'date_of_birth' not in locals(): date_of_birth = None
+    if 'gender' not in locals(): gender = None
+    if 'place_of_birth' not in locals(): place_of_birth = None
+    if 'issuance_date' not in locals(): issuance_date = None
+    if 'expiry_date' not in locals(): expiry_date = None
+    if 'id_number' not in locals(): id_number = front_ocr_result.get("extracted_id")
+    
+    # Default confidences
     field_confidences = {
-        "name_arabic": arabic_conf,
-        "name_english": english_conf,
-        "date_of_birth": 0.8 if date_of_birth else 0.0,
-        "gender": 0.85 if gender else 0.0,
-        "place_of_birth": 0.75 if place_of_birth else 0.0,
-        "issuance_date": 0.8 if issuance_date else 0.0,
-        "expiry_date": 0.8 if expiry_date else 0.0,
-        "id_number": id_number_conf,
+        "name_arabic": 0.0,
+        "name_english": 0.0,
+        "date_of_birth": 0.0,
+        "gender": 0.0,
+        "place_of_birth": 0.0,
+        "issuance_date": 0.0,
+        "expiry_date": 0.0,
+        "id_number": float(front_ocr_result.get("confidence", 0.0)) if id_number else 0.0,
     }
     
     return {
@@ -467,7 +614,7 @@ def parse_yemen_id_card(
         "place_of_birth": place_of_birth,
         "issuance_date": issuance_date,
         "expiry_date": expiry_date,
-        "id_number": front_ocr_result.get("extracted_id"),
+        "id_number": id_number,
         "id_type": front_ocr_result.get("id_type"),
         "field_confidences": field_confidences,
     }

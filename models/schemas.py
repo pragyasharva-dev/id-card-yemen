@@ -76,6 +76,14 @@ class OCRResult(BaseModel):
         default_factory=list,
         description="List of detected languages with names and flags"
     )
+    extraction_method: Optional[str] = Field(
+        None,
+        description="Method used for extraction (yolo, fallback)"
+    )
+    layout_fields: Optional[Dict[str, Any]] = Field(
+        None,
+        description="Detected layout fields (if yolo used)"
+    )
 
 
 class FaceMatchResult(BaseModel):
