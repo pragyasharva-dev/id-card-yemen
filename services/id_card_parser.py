@@ -91,7 +91,7 @@ def extract_dates_from_texts(texts: List[str]) -> Tuple[Optional[str], Optional[
     return None, None
 
 
-def extract_name_from_texts(texts: List[str], text_results: List[Dict]) -> Tuple[Optional[str], Optional[str]]:
+def extract_name_from_texts(texts: List[str], text_results: List[Dict]) -> Tuple[Optional[str], Optional[str], float, float]:
     """
     Extract name from OCR results using NER with heuristic fallback.
     
@@ -100,22 +100,24 @@ def extract_name_from_texts(texts: List[str], text_results: List[Dict]) -> Tuple
         text_results: Detailed text results with language detection
         
     Returns:
-        Tuple of (arabic_name, english_name)
+        Tuple of (arabic_name, english_name, arabic_confidence, english_confidence)
     """
     
     arabic_name = None
     english_name = None
+    arabic_conf = 0.0
+    english_conf = 0.0
     
     # Fallback to heuristic-based extraction
     # Look for Arabic name (usually longer text blocks in Arabic)
-    arabic_texts = [
-        item['text'] for item in text_results 
+    arabic_items = [
+        item for item in text_results 
         if item.get('detected_language') == 'ar' and len(item['text']) > 5
     ]
     
     # Look for English name (usually longer text blocks in English)
-    english_texts = [
-        item['text'] for item in text_results 
+    english_items = [
+        item for item in text_results 
         if item.get('detected_language') == 'en' and len(item['text']) > 5
     ]
     
@@ -135,23 +137,29 @@ def extract_name_from_texts(texts: List[str], text_results: List[Dict]) -> Tuple
         
         return (word_count >= 2 or (len(text) > 5 and digit_ratio < 0.3)) and not has_label
     
-    # Get the most likely Arabic name
-    if arabic_texts:
-        likely_names = [t for t in arabic_texts if is_likely_name(t)]
-        if likely_names:
+    # Get the most likely Arabic name with confidence
+    if arabic_items:
+        likely_items = [item for item in arabic_items if is_likely_name(item['text'])]
+        if likely_items:
             # Prefer longer names (more complete)
-            arabic_name = max(likely_names, key=len)
+            best_item = max(likely_items, key=lambda x: len(x['text']))
+            arabic_name = best_item['text']
+            arabic_conf = float(best_item.get('score', 0.0))
     
-    # Get the most likely English name
-    if english_texts:
-        likely_names = [t for t in english_texts if is_likely_name(t)]
-        if likely_names:
-            english_name = max(likely_names, key=len)
+    # Get the most likely English name with confidence
+    if english_items:
+        likely_items = [item for item in english_items if is_likely_name(item['text'])]
+        if likely_items:
+            best_item = max(likely_items, key=lambda x: len(x['text']))
+            english_name = best_item['text']
+            english_conf = float(best_item.get('score', 0.0))
     
     # If we have Arabic but not English, translate
     if arabic_name and not english_name:
         try:
             english_name = translate_text(arabic_name, source="ar", target="en")
+            # Inherit Arabic confidence for translation
+            english_conf = arabic_conf * 0.9  # Slight reduction for translation uncertainty
             
             # Validate translation quality
             # If translation is too short or contains weird characters, it might have failed
@@ -161,8 +169,10 @@ def extract_name_from_texts(texts: List[str], text_results: List[Dict]) -> Tuple
         except Exception as e:
             logger.warning(f"Translation failed for '{arabic_name}': {e}")
             english_name = None
+            english_conf = 0.0
     
-    return arabic_name, english_name
+    return arabic_name, english_name, arabic_conf, english_conf
+
 
 
 def extract_gender_from_texts(texts: List[str], text_results: List[Dict]) -> Optional[str]:
@@ -407,7 +417,7 @@ def parse_yemen_id_card(
         back_ocr_result: OCR result from BACK of ID card (optional)
         
     Returns:
-        Dictionary with structured ID card data
+        Dictionary with structured ID card data including field_confidences
     """
     # Extract from FRONT card
     front_texts = front_ocr_result.get("all_texts", [])
@@ -416,11 +426,14 @@ def parse_yemen_id_card(
     # Filter out organization/government names from front
     filtered_front_results = filter_organization_names(front_text_results)
     
-    # Extract fields from FRONT
-    arabic_name, english_name = extract_name_from_texts(front_texts, filtered_front_results)
+    # Extract fields from FRONT (with confidence)
+    arabic_name, english_name, arabic_conf, english_conf = extract_name_from_texts(front_texts, filtered_front_results)
     date_of_birth = extract_date_of_birth(front_texts)
     gender = extract_gender_from_texts(front_texts, front_text_results)
     place_of_birth = extract_place_of_birth(front_texts)
+    
+    # Get ID number confidence from front_ocr_result
+    id_number_conf = float(front_ocr_result.get("confidence", 0.0))
     
     # Initialize back card fields
     issuance_date = None
@@ -433,6 +446,19 @@ def parse_yemen_id_card(
         # Extract fields from BACK
         issuance_date, expiry_date = extract_dates_from_texts(back_texts)
     
+    # Build field_confidences dictionary
+    # Default confidence for date fields is 0.8 if extracted, 0.0 otherwise
+    field_confidences = {
+        "name_arabic": arabic_conf,
+        "name_english": english_conf,
+        "date_of_birth": 0.8 if date_of_birth else 0.0,
+        "gender": 0.85 if gender else 0.0,
+        "place_of_birth": 0.75 if place_of_birth else 0.0,
+        "issuance_date": 0.8 if issuance_date else 0.0,
+        "expiry_date": 0.8 if expiry_date else 0.0,
+        "id_number": id_number_conf,
+    }
+    
     return {
         "name_arabic": arabic_name,
         "name_english": english_name,
@@ -442,8 +468,10 @@ def parse_yemen_id_card(
         "issuance_date": issuance_date,
         "expiry_date": expiry_date,
         "id_number": front_ocr_result.get("extracted_id"),
-        "id_type": front_ocr_result.get("id_type")
+        "id_type": front_ocr_result.get("id_type"),
+        "field_confidences": field_confidences,
     }
+
 
 
 def filter_organization_names(text_results: List[Dict]) -> List[Dict]:
