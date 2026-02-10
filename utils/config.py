@@ -239,3 +239,31 @@ FIELD_CONFIGURATIONS = {
         "enabled": True
     }
 }
+
+
+# Scoring Weights Configuration
+# Adjust these weights to tune the scoring matrix
+SCORING_WEIGHTS = {
+    # Document Verification (Max 35)
+    "DOCUMENT_VERIFICATION": {
+        "AUTHENTICITY": float(os.environ.get("WEIGHT_DOC_AUTH", "10.0")),
+        "QUALITY": float(os.environ.get("WEIGHT_DOC_QUALITY", "10.0")),
+        "OCR_CONFIDENCE": float(os.environ.get("WEIGHT_OCR_CONF", "10.0")),
+        "FRONT_BACK_MATCH": float(os.environ.get("WEIGHT_FRONT_BACK", "5.0")),
+        "MAX_SCORE": 35.0
+    },
+    
+    # Data Matching (Max 30)
+    "DATA_MATCHING": {
+        "ID_NUMBER": float(os.environ.get("WEIGHT_DATA_ID", "20.0")),
+        "NAME_MATCH": float(os.environ.get("WEIGHT_DATA_NAME", "10.0")),
+        "MAX_SCORE": 30.0
+    },
+    
+    # Face & Liveness (Max 35)
+    "FACE_LIVENESS": {
+        "FACE_MATCH": float(os.environ.get("WEIGHT_FACE_MATCH", "20.0")),
+        "LIVENESS": float(os.environ.get("WEIGHT_LIVENESS", "15.0")),
+        "MAX_SCORE": 35.0
+    }
+}

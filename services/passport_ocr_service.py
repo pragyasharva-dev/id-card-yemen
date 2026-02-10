@@ -61,13 +61,13 @@ def extract_all_fields_yolo(image: np.ndarray) -> Dict[str, any]:
     Extract ALL passport fields using YOLO layout detection.
     
     Detects and OCRs every field the model can find.
-    Returns a dictionary with all detected field values.
+    Returns a dictionary with all detected field values and per-field confidence scores.
     
     Args:
         image: Passport image (numpy array, BGR format)
         
     Returns:
-        Dictionary with all detected fields (undetected fields are None)
+        Dictionary with all detected fields, field_confidences, and metadata
     """
     from services.layout_service import get_layout_service
     
@@ -91,6 +91,8 @@ def extract_all_fields_yolo(image: np.ndarray) -> Dict[str, any]:
         # MRZ handled separately
         "mrz_fields": [],
         "detected_labels": [],
+        # Per-field confidence scores
+        "field_confidences": {},
     }
     
     service = get_layout_service()
@@ -158,10 +160,12 @@ def extract_all_fields_yolo(image: np.ndarray) -> Dict[str, any]:
             text, confidence = ocr_to_single_string(detection.crop, ocr, lang=lang)
             if text:
                 result[key] = text
+                result["field_confidences"][key] = float(confidence)
         except Exception as e:
             logger.warning(f"OCR failed for {label}: {e}")
     
     return result
+
 
 
 def extract_mrz_from_fields(mrz_fields: List, ocr) -> Optional[Dict]:
@@ -308,6 +312,22 @@ def extract_passport_data(image_input) -> Dict:
             # Debug info
             "detected_labels": yolo_fields.get("detected_labels", []),
         }
+        
+        # Build field_confidences with API-compatible names
+        yolo_conf = yolo_fields.get("field_confidences", {})
+        mrz_conf = mrz_data.get("confidence", 0.95) if mrz_data else 0.0
+        final_data["field_confidences"] = {
+            "passport_number": mrz_conf if mrz_data else yolo_conf.get("passport_no", 0.0),
+            "given_names": mrz_conf if mrz_data else yolo_conf.get("given_name_english", 0.0),
+            "surname": mrz_conf if mrz_data else yolo_conf.get("surname_english", 0.0),
+            "date_of_birth": mrz_conf if mrz_data else yolo_conf.get("dob", 0.0),
+            "expiry_date": mrz_conf if mrz_data else yolo_conf.get("expiry_date", 0.0),
+            "issuance_date": yolo_conf.get("issue_date", 0.0),
+            "gender": mrz_conf if mrz_data else 0.0,
+            "place_of_birth": yolo_conf.get("pob", 0.0),
+            "name_arabic": max(yolo_conf.get("given_name_arabic", 0.0), yolo_conf.get("surname_arabic", 0.0)),
+        }
+
         
         # Construct full English name
         given = final_data.get("given_names") or ""

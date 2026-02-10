@@ -20,12 +20,15 @@ from models.v1_schemas import (
     FaceMatchResult,
     LivenessResult_,
     SelfieImageQuality,
+    FaceAndLivenessScore,
 )
 from services.face_recognition import compare_faces
 from services.liveness_service import detect_spoof
 from services.image_quality_service import check_selfie_quality
 from utils.image_manager import load_image
-from utils.config import FACE_MATCH_THRESHOLD
+from services.image_quality_service import check_selfie_quality
+from utils.image_manager import load_image
+from services.scoring_service import calculate_face_liveness_score
 
 logger = logging.getLogger(__name__)
 
@@ -150,8 +153,17 @@ async def face_match_endpoint(
             failure_reasons=selfie_quality_result.get("issues", [])
         )
         
-        # Calculate final score (weighted combination)
-        # 60% face match + 30% liveness + 10% quality
+        # Calculate Face and Liveness Score breakdown
+        face_and_liveness_score = calculate_face_liveness_score(
+            face_match_score=normalized_score,
+            liveness_confidence=liveness_confidence,
+            is_live=is_live
+        )
+        
+        # Calculate final score (weighted combination for display)
+        # Re-calc using weights relative to total 100
+        # This is just for the 'final_score' field required by API 2 contract
+        # which combines Face + Liveness + Quality for this endpoint context
         final_score = (
             (normalized_score * 0.6) +
             (liveness_confidence * 0.3) +
@@ -164,7 +176,8 @@ async def face_match_endpoint(
             liveness=liveness,
             image_quality=image_quality,
             final_score=final_score,
-            errors=errors
+            errors=errors,
+            face_and_liveness_score=face_and_liveness_score,
         )
         
     except Exception as e:
