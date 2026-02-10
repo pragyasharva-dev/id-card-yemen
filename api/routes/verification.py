@@ -4,13 +4,15 @@ from fastapi import APIRouter, UploadFile, File, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.schemas import VerifyRequest, VerifyResponse, LivenessResult
-from services.ocr_service import extract_id_from_image
+from services.ocr_service import extract_id_from_image, get_ocr_service
+from services.id_card_parser import parse_yemen_id_card
 from services.face_recognition import verify_identity
 # from services.database import get_id_card_db  # Deprecated
 from services.db import get_db
 from services.data_service import save_document, save_verification
 from services.image_quality_service import check_id_quality, check_selfie_quality
 from utils.image_manager import load_image, save_image
+from utils.exceptions import AppError
 from utils.config import PROCESSED_DIR
 
 router = APIRouter(tags=["Verification"])
@@ -35,6 +37,15 @@ async def verify_identity_endpoint(
     The similarity score is a value between 0.0 and 1.0 - 
     higher values indicate higher likelihood of same person.
     """
+    # Initialize variables early so they're available in except blocks
+    extracted_id = None
+    id_type = None
+    id_front_filename = None
+    id_back_filename = None
+    parsed_data = {}
+    liveness_response = None
+    doc_record = None
+    
     try:
         # Load front ID card and selfie
         id_card_front_bytes = await id_card_front.read()
@@ -58,8 +69,14 @@ async def verify_identity_endpoint(
         extracted_id = front_ocr_result.get("extracted_id")
         id_type = front_ocr_result.get("id_type")
         
-        # Note: Structured data parsing removed - data is now entered manually into database
-        parsed_data = {}
+        # Extract from back card if provided
+        back_ocr_result = None
+        if id_card_back_image is not None:
+            ocr_service = get_ocr_service()
+            back_ocr_result = ocr_service.process_id_card(id_card_back_image, side="back")
+        
+        # Parse structured fields from front + back using full parser
+        parsed_data = parse_yemen_id_card(front_ocr_result, back_ocr_result)
         
         # Save images with proper naming if ID was extracted
         if extracted_id:
@@ -91,6 +108,66 @@ async def verify_identity_endpoint(
             )
         
         if face_result.get("error"):
+            # Save processing error to DB before returning
+            if extracted_id:
+                try:
+                    error_msg = face_result["error"]
+                    failure_data = {
+                        "status": "error",
+                        "code": "PROCESSING_ERROR",
+                        "message": error_msg,
+                        "details": {}
+                    }
+                    
+                    front_blob = None
+                    if id_card_front_image is not None:
+                        _, front_encoded = cv2.imencode('.jpg', id_card_front_image)
+                        front_blob = front_encoded.tobytes()
+                    
+                    back_blob = None
+                    if id_card_back_image is not None:
+                        _, back_encoded = cv2.imencode('.jpg', id_card_back_image)
+                        back_blob = back_encoded.tobytes()
+                    
+                    ocr_store_data = {
+                        "extracted_id": extracted_id,
+                        "id_type": id_type,
+                        "name_arabic": parsed_data.get("name_arabic"),
+                        "name_english": parsed_data.get("name_english"),
+                        "date_of_birth": parsed_data.get("date_of_birth"),
+                        "place_of_birth": parsed_data.get("place_of_birth"),
+                        "gender": parsed_data.get("gender"),
+                        "issuance_date": parsed_data.get("issuance_date"),
+                        "expiry_date": parsed_data.get("expiry_date"),
+                        "confidence": front_ocr_result.get("confidence"),
+                        "extraction_method": front_ocr_result.get("extraction_method"),
+                    }
+                    
+                    doc_record = await save_document(
+                        session=db,
+                        document_number=extracted_id,
+                        document_type=id_type or "unknown",
+                        ocr_data=ocr_store_data,
+                        front_image_data=front_blob,
+                        back_image_data=back_blob
+                    )
+                    
+                    if doc_record:
+                        await save_verification(
+                            session=db,
+                            document_id=doc_record.id,
+                            status="failed",
+                            similarity_score=None,
+                            selfie_image_data=None,
+                            liveness_data=face_result.get("liveness") or {},
+                            image_quality_metrics={},
+                            authenticity_checks={},
+                            failure_reason=failure_data
+                        )
+                except Exception:
+                    import traceback
+                    traceback.print_exc()
+            
             return VerifyResponse(
                 success=False,
                 extracted_id=extracted_id,
@@ -130,42 +207,19 @@ async def verify_identity_endpoint(
                     _, selfie_encoded = cv2.imencode('.jpg', selfie_image)
                     selfie_blob = selfie_encoded.tobytes()
                 
-                # Prepare OCR data for JSONB storage (extract from layout_fields)
+                # Prepare OCR data for JSONB storage
                 layout = front_ocr_result.get("layout_fields", {})
-                
-                # Extract name (Arabic text from 'name' field)
-                name_data = layout.get("name", {})
-                name_text = name_data.get("text", "") if name_data else ""
-                
-                # Extract dates
-                dob_data = layout.get("DOB", {})
-                dob_text = dob_data.get("text", "") if dob_data else ""
-                
-                issue_data = layout.get("issue_date", {})
-                issue_text = issue_data.get("text", "") if issue_data else ""
-                
-                expiry_data = layout.get("expiry_data", {}) or layout.get("expiry_date", {})
-                expiry_text = expiry_data.get("text", "") if expiry_data else ""
-                
-                # Update parsed_data for response
-                parsed_data = {
-                    "name_arabic": name_text if name_text else None,
-                    "date_of_birth": dob_text if dob_text else None,
-                    "issuance_date": issue_text if issue_text else None,
-                    "expiry_date": expiry_text if expiry_text else None,
-                    "place_of_birth": layout.get("POB", {}).get("text") if layout.get("POB") else None
-                }
                 
                 ocr_store_data = {
                     "extracted_id": extracted_id,
                     "id_type": id_type,
-                    "name_arabic": name_text if name_text else None,
-                    "name_english": None,  # Translation not available yet
-                    "date_of_birth": dob_text if dob_text else None,
-                    "place_of_birth": None,  # Not extracted by YOLO model
-                    "gender": None,  # Not extracted by YOLO model
-                    "issuance_date": issue_text if issue_text else None,
-                    "expiry_date": expiry_text if expiry_text else None,
+                    "name_arabic": parsed_data.get("name_arabic"),
+                    "name_english": parsed_data.get("name_english"),
+                    "date_of_birth": parsed_data.get("date_of_birth"),
+                    "place_of_birth": parsed_data.get("place_of_birth"),
+                    "gender": parsed_data.get("gender"),
+                    "issuance_date": parsed_data.get("issuance_date"),
+                    "expiry_date": parsed_data.get("expiry_date"),
                     "confidence": front_ocr_result.get("confidence"),
                     "extraction_method": front_ocr_result.get("extraction_method"),
                     "layout_fields": layout,  # Store full layout for debugging
@@ -315,23 +369,109 @@ async def verify_identity_endpoint(
             error=None
         )
         
-    except Exception as e:
-        import traceback
-        traceback.print_exc()  # Print full traceback to terminal
+    except AppError as e:
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.error(f"[{e.code}] {e.message} | Details: {e.details}")
+        
+        # Save structured error to DB
+        try:
+            failure_data = e.to_dict()
+            if extracted_id:
+                _doc = await save_document(
+                    session=db,
+                    document_number=extracted_id,
+                    document_type=id_type or "unknown",
+                    ocr_data={"extracted_id": extracted_id, "id_type": id_type},
+                    front_image_data=None,
+                    back_image_data=None
+                )
+                if _doc:
+                    await save_verification(
+                        session=db,
+                        document_id=_doc.id,
+                        status="failed",
+                        similarity_score=None,
+                        selfie_image_data=None,
+                        liveness_data={},
+                        image_quality_metrics={},
+                        authenticity_checks={},
+                        failure_reason=failure_data
+                    )
+        except Exception:
+            pass  # Don't fail on DB save
+        
         return VerifyResponse(
             success=False,
-            extracted_id=None,
-            id_type=None,
+            extracted_id=extracted_id,
+            id_type=id_type,
             similarity_score=None,
-            id_front=None,
-            id_back=None,
-            name_arabic=None,
-            name_english=None,
-            date_of_birth=None,
-            gender=None,
-            place_of_birth=None,
-            issuance_date=None,
-            expiry_date=None,
+            id_front=id_front_filename,
+            id_back=id_back_filename,
+            name_arabic=parsed_data.get("name_arabic"),
+            name_english=parsed_data.get("name_english"),
+            date_of_birth=parsed_data.get("date_of_birth"),
+            gender=parsed_data.get("gender"),
+            place_of_birth=parsed_data.get("place_of_birth"),
+            issuance_date=parsed_data.get("issuance_date"),
+            expiry_date=parsed_data.get("expiry_date"),
+            liveness=liveness_response,
+            error=e.message
+        )
+    
+    except Exception as e:
+        import logging
+        import traceback
+        logger = logging.getLogger(__name__)
+        logger.error(f"[UNKNOWN_ERROR] {str(e)}")
+        traceback.print_exc()
+        
+        # Save unknown error to DB
+        try:
+            failure_data = {
+                "status": "error",
+                "code": "UNKNOWN_ERROR",
+                "message": str(e),
+                "details": {}
+            }
+            if extracted_id:
+                _doc = await save_document(
+                    session=db,
+                    document_number=extracted_id,
+                    document_type=id_type or "unknown",
+                    ocr_data={"extracted_id": extracted_id, "id_type": id_type},
+                    front_image_data=None,
+                    back_image_data=None
+                )
+                if _doc:
+                    await save_verification(
+                        session=db,
+                        document_id=_doc.id,
+                        status="failed",
+                        similarity_score=None,
+                        selfie_image_data=None,
+                        liveness_data={},
+                        image_quality_metrics={},
+                        authenticity_checks={},
+                        failure_reason=failure_data
+                    )
+        except Exception:
+            pass  # Don't fail on DB save
+        
+        return VerifyResponse(
+            success=False,
+            extracted_id=extracted_id,
+            id_type=id_type,
+            similarity_score=None,
+            id_front=id_front_filename,
+            id_back=id_back_filename,
+            name_arabic=parsed_data.get("name_arabic"),
+            name_english=parsed_data.get("name_english"),
+            date_of_birth=parsed_data.get("date_of_birth"),
+            gender=parsed_data.get("gender"),
+            place_of_birth=parsed_data.get("place_of_birth"),
+            issuance_date=parsed_data.get("issuance_date"),
+            expiry_date=parsed_data.get("expiry_date"),
             liveness=None,
             error=str(e)
         )
@@ -421,6 +561,24 @@ async def verify_identity_json(
             error=None
         )
         
+    except AppError as e:
+        return VerifyResponse(
+            success=False,
+            extracted_id=request.id_number,
+            id_type=None,
+            similarity_score=None,
+            id_front=None,
+            id_back=None,
+            name_arabic=None,
+            name_english=None,
+            date_of_birth=None,
+            gender=None,
+            place_of_birth=None,
+            issuance_date=None,
+            expiry_date=None,
+            error=e.message
+        )
+    
     except Exception as e:
         return VerifyResponse(
             success=False,
