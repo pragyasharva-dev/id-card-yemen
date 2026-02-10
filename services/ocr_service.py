@@ -746,7 +746,8 @@ def extract_id_from_path(image_path: str) -> Dict:
     """
     image = cv2.imread(image_path)
     if image is None:
-        raise ValueError(f"Could not read image: {image_path}")
+        from utils.exceptions import ImageProcessingError
+        raise ImageProcessingError(f"Could not read image: {image_path}")
     
     return extract_id_from_image(image)
 
