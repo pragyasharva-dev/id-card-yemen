@@ -110,6 +110,22 @@ class ImageQuality(BaseSchema):
     back_image: Optional[ImageQualityItem] = Field(None, alias="backImage")
 
 
+class DocumentVerificationScore(BaseSchema):
+    """Detailed breakdown of document verification score (max 35 pts)."""
+    authenticity: float = Field(0.0, alias="authenticity", ge=0.0, le=10.0, description="Document authenticity score (max 10)")
+    quality: float = Field(0.0, alias="quality", ge=0.0, le=10.0, description="Image quality score (max 10)")
+    ocr_confidence: float = Field(0.0, alias="ocrConfidence", ge=0.0, le=10.0, description="OCR confidence score (max 10)")
+    front_back_match: float = Field(0.0, alias="frontBackMatch", ge=0.0, le=5.0, description="Front/back ID match (max 5, National ID only)")
+    total: float = Field(0.0, alias="total", ge=0.0, le=35.0, description="Total document verification score")
+
+
+class DataMatchScore(BaseSchema):
+    """Detailed breakdown of data matching score (max 30 pts)."""
+    id_number: float = Field(0.0, alias="idNumber", ge=0.0, le=20.0, description="ID number match score (max 20)")
+    name_match: float = Field(0.0, alias="nameMatch", ge=0.0, le=10.0, description="Name match score (max 10)")
+    total: float = Field(0.0, alias="total", ge=0.0, le=30.0, description="Total data match score")
+
+
 class OCRCheckResponse(BaseSchema):
     """Response for OCR Check endpoint (API 1)."""
     transaction_id: str = Field(..., alias="transactionId", description="Unique transaction identifier")
@@ -137,6 +153,10 @@ class OCRCheckResponse(BaseSchema):
     
     # Errors (for error handling)
     errors: List[str] = Field(default_factory=list, alias="errors", description="Any errors encountered")
+    
+    # Scoring breakdown
+    document_verification_score: Optional[DocumentVerificationScore] = Field(None, alias="documentVerificationScore")
+    data_match_score: Optional[DataMatchScore] = Field(None, alias="dataMatchScore")
 
 
 # =============================================================================
@@ -161,6 +181,13 @@ class SelfieImageQuality(BaseSchema):
     failure_reasons: List[str] = Field(default_factory=list, alias="failureReasons", description="Quality issues")
 
 
+class FaceAndLivenessScore(BaseSchema):
+    """Detailed breakdown of face and liveness score (max 35 pts)."""
+    face_match: float = Field(0.0, alias="faceMatch", ge=0.0, le=20.0, description="Face match score (max 20)")
+    liveness: float = Field(0.0, alias="liveness", ge=0.0, le=15.0, description="Liveness score (max 15)")
+    total: float = Field(0.0, alias="total", ge=0.0, le=35.0, description="Total face and liveness score")
+
+
 class FaceMatchResponse(BaseSchema):
     """Response for Face Match endpoint (API 2)."""
     transaction_id: str = Field(..., alias="transactionId", description="Unique transaction identifier")
@@ -179,3 +206,6 @@ class FaceMatchResponse(BaseSchema):
     
     # Errors
     errors: List[str] = Field(default_factory=list, alias="errors", description="Any errors encountered")
+    
+    # Scoring breakdown
+    face_and_liveness_score: Optional[FaceAndLivenessScore] = Field(None, alias="faceAndLivenessScore")
