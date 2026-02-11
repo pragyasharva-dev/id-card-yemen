@@ -232,14 +232,24 @@ async def ocr_check_endpoint(
         # Assess document quality / authenticity
         try:
             # Assess document quality / authenticity
+            logger.info(f"Checking quality for front image: {type(front_image)}")
+            if isinstance(front_image, np.ndarray):
+                logger.info(f"Front image shape: {front_image.shape}")
+            
+            if front_image is None or front_image.size == 0:
+                raise ValueError("Front image is Empty or None")
+
             quality_result = await run_in_threadpool(check_id_quality, front_image)
             quality_score = quality_result.get("overall_quality", 0.0)
             front_issues = quality_result.get("issues", [])
         except Exception as e:
             logger.warning(f"Quality check failed for front image: {e}")
             quality_score = 0.0
-            front_issues = [str(e)]
-            errors.append(f"Front Image Quality Check: {str(e)}")
+            error_msg = str(e)
+            if "expected str, bytes or os.PathLike object" in error_msg:
+                 error_msg = "Internal Error: Face Detection Model path configuration issue"
+            front_issues = [error_msg]
+            errors.append(f"Front Image Quality Check: {error_msg}")
         
         document_authenticity = DocumentAuthenticity(
             score=quality_score,
