@@ -12,8 +12,9 @@ import logging
 import json
 from typing import Optional
 
-from fastapi import APIRouter, UploadFile, File, Form, Request, HTTPException
+from fastapi import APIRouter, Depends, UploadFile, File, Form, Request, HTTPException
 from fastapi.concurrency import run_in_threadpool
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.v1_schemas import (
     FaceMatchResponse,
@@ -26,9 +27,14 @@ from services.face_recognition import compare_faces
 from services.liveness_service import detect_spoof
 from services.image_quality_service import check_selfie_quality
 from utils.image_manager import load_image
-from services.image_quality_service import check_selfie_quality
-from utils.image_manager import load_image
 from services.scoring_service import calculate_face_liveness_score
+from services.db import get_db
+from services.config_service import get_dynamic_config
+from utils.config import (
+    FACE_MATCH_THRESHOLD as DEFAULT_FACE_MATCH_THRESHOLD,
+    LIVENESS_ENABLED as DEFAULT_LIVENESS_ENABLED,
+    LIVENESS_THRESHOLD as DEFAULT_LIVENESS_THRESHOLD,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -43,11 +49,13 @@ def _parse_json_form(json_str: str, field_name: str) -> dict:
         raise HTTPException(status_code=400, detail=f"Invalid JSON in {field_name}: {str(e)}")
 
 
-def _determine_face_match_status(score: float, has_error: bool) -> str:
+def _determine_face_match_status(score: float, has_error: bool, threshold: float = None) -> str:
     """Determine face match status per contract: MATCH | NO_MATCH | INCONCLUSIVE."""
     if has_error:
         return "INCONCLUSIVE"
-    threshold_100 = FACE_MATCH_THRESHOLD * 100
+    if threshold is None:
+        threshold = DEFAULT_FACE_MATCH_THRESHOLD
+    threshold_100 = threshold * 100
     if score >= threshold_100:
         return "MATCH"
     elif score >= threshold_100 * 0.7:
@@ -55,8 +63,10 @@ def _determine_face_match_status(score: float, has_error: bool) -> str:
     return "NO_MATCH"
 
 
-def _determine_liveness_result(is_live: bool, has_error: bool) -> str:
+def _determine_liveness_result(is_live: bool, has_error: bool, enabled: bool = True) -> str:
     """Determine liveness result per contract: LIVE | NOT_LIVE."""
+    if not enabled:
+        return "LIVE"  # Or "DISABLED"? Contract says enum. Treating as LIVE is safest fallback.
     if has_error:
         return "NOT_LIVE"
     return "LIVE" if is_live else "NOT_LIVE"
@@ -68,6 +78,7 @@ async def face_match_endpoint(
     metadata: str = Form(..., alias="metadata", description="JSON: transactionId, documentType"),
     selfie_image: UploadFile = File(..., alias="selfieImage", description="User selfie image (live capture)"),
     id_front_image: UploadFile = File(..., alias="idFrontImage", description="ID card front image with face"),
+    db: AsyncSession = Depends(get_db),
 ):
     """
     Biometric Face Matching & Liveness Check (API 2 Contract)
@@ -86,6 +97,17 @@ async def face_match_endpoint(
     transaction_id = meta.get("transactionId", "unknown")
     
     try:
+        # Fetch dynamic threshold from DB (falls back to config.py default)
+        face_match_threshold = await get_dynamic_config(
+            db, "FACE_MATCH_THRESHOLD", DEFAULT_FACE_MATCH_THRESHOLD
+        )
+        liveness_enabled = await get_dynamic_config(
+            db, "LIVENESS_ENABLED", DEFAULT_LIVENESS_ENABLED
+        )
+        liveness_threshold = await get_dynamic_config(
+            db, "LIVENESS_THRESHOLD", DEFAULT_LIVENESS_THRESHOLD
+        )
+
         # Load images
         selfie_bytes = await selfie_image.read()
         id_bytes = await id_front_image.read()
@@ -127,21 +149,29 @@ async def face_match_endpoint(
         
         face_match = FaceMatchResult(
             score=normalized_score,
-            status=_determine_face_match_status(normalized_score, has_face_error)
+            status=_determine_face_match_status(normalized_score, has_face_error, face_match_threshold)
         )
         
         # Run liveness detection on selfie
-        liveness_result = await run_in_threadpool(detect_spoof, selfie_img)
-        
-        is_live = liveness_result.get("is_live", False)
-        liveness_confidence = liveness_result.get("confidence", 0.0) * 100
-        
-        has_liveness_error = bool(liveness_result.get("error"))
-        if has_liveness_error:
-            errors.append(f"Liveness error: {liveness_result['error']}")
+        if liveness_enabled:
+            # Pass dynamic threshold to switch from strict mode to score mode
+            liveness_result = await run_in_threadpool(detect_spoof, selfie_img, liveness_threshold)
+            
+            is_live = liveness_result.get("is_live", False)
+            liveness_confidence = liveness_result.get("confidence", 0.0) * 100
+            
+            has_liveness_error = bool(liveness_result.get("error"))
+            if has_liveness_error:
+                errors.append(f"Liveness error: {liveness_result['error']}")
+        else:
+            # Liveness disabled - simulate perfect score
+            is_live = True
+            liveness_confidence = 100.0
+            has_liveness_error = False
+            liveness_result = {}
         
         liveness = LivenessResult_(
-            result=_determine_liveness_result(is_live, has_liveness_error),
+            result=_determine_liveness_result(is_live, has_liveness_error, liveness_enabled),
             confidence_score=liveness_confidence
         )
         

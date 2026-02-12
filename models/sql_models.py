@@ -76,6 +76,18 @@ class Verification(Base):
     document: Mapped["Document"] = relationship(back_populates="verifications")
 
 
+class SystemConfig(Base):
+    """Dynamic configuration overrides set via Admin API."""
+    __tablename__ = "system_configs"
+
+    key: Mapped[str] = mapped_column(String(100), primary_key=True)
+    value: Mapped[str] = mapped_column(String(500), nullable=False)
+    description: Mapped[Optional[str]] = mapped_column(String(500))
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
 class AuditLog(Base):
     __tablename__ = "audit_logs"
 
