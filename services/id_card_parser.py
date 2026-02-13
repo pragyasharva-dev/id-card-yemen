@@ -443,13 +443,10 @@ def parse_yemen_id_card(
         expiry_conf = float(layout_fields.get("expiry_data", {}).get("confidence", 0.0))
         
         # Name: the YOLO name field is Arabic
+        # NOTE: english_name is NOT translated here — the route layer uses
+        # hybrid_name_convert for a superior local transliteration instead.
         arabic_name = name_text.strip() if name_text.strip() else None
         english_name = None
-        if arabic_name:
-            try:
-                english_name = translate_text(arabic_name, source="ar", target="en")
-            except Exception as e:
-                logger.warning(f"Translation failed for YOLO name '{arabic_name}': {e}")
         
         # DOB: normalise to YYYY-MM-DD
         date_of_birth = None
