@@ -26,9 +26,8 @@ from services.face_recognition import compare_faces
 from services.liveness_service import detect_spoof
 from services.image_quality_service import check_selfie_quality
 from utils.image_manager import load_image
-from services.image_quality_service import check_selfie_quality
-from utils.image_manager import load_image
 from services.scoring_service import calculate_face_liveness_score
+from utils.config import FACE_MATCH_THRESHOLD
 
 logger = logging.getLogger(__name__)
 
@@ -148,9 +147,10 @@ async def face_match_endpoint(
         # Run image quality assessment on selfie
         selfie_quality_result = await run_in_threadpool(check_selfie_quality, selfie_img)
         
+        selfie_error = selfie_quality_result.get("error")
         image_quality = SelfieImageQuality(
-            score=selfie_quality_result.get("overall_quality", 0.0),
-            failure_reasons=selfie_quality_result.get("issues", [])
+            score=selfie_quality_result.get("quality_score", 0.0),
+            failure_reasons=[selfie_error] if selfie_error else []
         )
         
         # Calculate Face and Liveness Score breakdown
@@ -167,7 +167,7 @@ async def face_match_endpoint(
         final_score = (
             (normalized_score * 0.6) +
             (liveness_confidence * 0.3) +
-            (selfie_quality_result.get("overall_quality", 0.0) * 100 * 0.1)
+            (selfie_quality_result.get("quality_score", 0.0) * 100 * 0.1)
         )
         
         return FaceMatchResponse(
