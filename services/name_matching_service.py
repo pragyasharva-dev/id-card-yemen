@@ -1,27 +1,31 @@
 """
 Name Matching Service for e-KYC OCR-to-User Data Comparison
 
-High-severity field validation with:
-- Arabic text normalization
-- English text normalization
-- Fuzzy string matching
-- Multiple comparison strategies
-- Configurable thresholds for high-severity decisions
+3-tier matching pipeline:
+1. Exact Match: 100% if normalized strings are identical
+2. Token-Set Match: 100% if same words present in any order
+3. Proportional Fuzzy Match: Per-token fuzzy scoring with
+   language-specific thresholds (0.65 English, 0.75 Arabic)
 
-Key Principles:
-- High severity: Mismatches may cause rejection
-- Scoring-based approach
-- Handles common spelling variations
-- Supports both Arabic and English names
+Supports:
+- Arabic text normalization (alef/taa/yaa variants, diacritics)
+- English text normalization (case, whitespace, special chars)
+- Order-invariant comparison (handles "First Last" vs "Last First")
+- OCR typo tolerance (e.g., "البريهي" vs "البرهي")
+- Transliteration tolerance (e.g., "Mohammed" vs "Muhammad")
 """
 
 from typing import Optional, Literal
 import logging
 import re
-import unicodedata
 from difflib import SequenceMatcher
 
 logger = logging.getLogger(__name__)
+
+# Language-specific fuzzy thresholds for per-token matching
+FUZZY_THRESHOLD_ENGLISH = 0.65   # Looser: handles transliteration variants
+FUZZY_THRESHOLD_ARABIC = 0.75    # Tighter: handles OCR typos
+MIN_TOKEN_MATCH_RATIO = 0.60     # At least 60% of tokens must match
 
 
 def normalize_arabic_name(text: str) -> str:
@@ -34,7 +38,6 @@ def normalize_arabic_name(text: str) -> str:
     - ي ↔ ى (yaa variations)
     - Remove diacritics (harakat)
     - Remove extra whitespace
-    - Convert to lowercase equivalent
     
     Args:
         text: Raw Arabic name
@@ -78,7 +81,6 @@ def normalize_english_name(text: str) -> str:
     - Convert to lowercase
     - Remove extra whitespace
     - Remove special characters except spaces and hyphens
-    - Handle common abbreviations
     
     Args:
         text: Raw English name
@@ -102,48 +104,79 @@ def normalize_english_name(text: str) -> str:
     return text
 
 
-def calculate_string_similarity(str1: str, str2: str) -> float:
+def _token_set_match(tokens1: set, tokens2: set) -> bool:
     """
-    Calculate similarity between two strings using SequenceMatcher.
+    Check if two token sets contain the same words (order-invariant).
     
     Args:
-        str1: First string (normalized)
-        str2: Second string (normalized)
+        tokens1: First set of name tokens
+        tokens2: Second set of name tokens
         
     Returns:
-        Similarity score (0.0 - 1.0)
+        True if both sets have identical tokens
     """
-    if not str1 or not str2:
-        return 0.0
+    return tokens1 == tokens2 and len(tokens1) > 0
+
+
+def _proportional_fuzzy_score(
+    ocr_tokens: list,
+    user_tokens: list,
+    threshold: float
+) -> float:
+    """
+    Calculate proportional fuzzy match score between token lists.
     
-    return SequenceMatcher(None, str1, str2).ratio()
-
-
-def calculate_token_overlap(str1: str, str2: str) -> float:
-    """
-    Calculate token overlap between two strings (useful for multi-word names).
+    For each OCR token, find the best-matching user token.
+    A token counts as "matched" if its best similarity >= threshold.
     
     Args:
-        str1: First string (normalized)
-        str2: Second string (normalized)
+        ocr_tokens: Tokens from OCR-extracted name
+        user_tokens: Tokens from user-entered name
+        threshold: Minimum similarity for a token to count as matched
         
     Returns:
-        Token overlap score (0.0 - 1.0)
+        Proportional score (matched_tokens / max_tokens), 0.0 - 1.0
     """
-    if not str1 or not str2:
+    if not ocr_tokens or not user_tokens:
         return 0.0
     
-    tokens1 = set(str1.split())
-    tokens2 = set(str2.split())
+    matched_count = 0
+    used_user_indices = set()
+    total_similarity = 0.0
     
-    if not tokens1 or not tokens2:
+    for ocr_token in ocr_tokens:
+        best_score = 0.0
+        best_idx = -1
+        
+        for j, user_token in enumerate(user_tokens):
+            if j in used_user_indices:
+                continue
+            score = SequenceMatcher(None, ocr_token, user_token).ratio()
+            if score > best_score:
+                best_score = score
+                best_idx = j
+        
+        if best_score >= threshold and best_idx >= 0:
+            matched_count += 1
+            used_user_indices.add(best_idx)
+            total_similarity += best_score
+    
+    # Use max of both token counts as denominator
+    # This penalizes missing or extra tokens
+    max_tokens = max(len(ocr_tokens), len(user_tokens))
+    
+    if max_tokens == 0:
         return 0.0
     
-    # Calculate Jaccard similarity
-    intersection = tokens1 & tokens2
-    union = tokens1 | tokens2
+    # Proportional score: how many tokens matched out of total
+    proportion_matched = matched_count / max_tokens
     
-    return len(intersection) / len(union) if union else 0.0
+    # Average quality of matched tokens
+    avg_quality = total_similarity / matched_count if matched_count > 0 else 0.0
+    
+    # Final score: weighted by both proportion and quality
+    # This ensures high scores only when many tokens match well
+    return proportion_matched * avg_quality
 
 
 def compare_names(
@@ -152,7 +185,12 @@ def compare_names(
     language: Literal["arabic", "english"]
 ) -> dict:
     """
-    Compare two names with multiple strategies.
+    Compare two names using a 3-tier matching pipeline.
+    
+    Pipeline:
+    1. Exact Match: normalized strings identical → 1.0
+    2. Token-Set Match: same words in any order → 1.0
+    3. Proportional Fuzzy Match: per-token fuzzy scoring
     
     Args:
         ocr_name: Name extracted from OCR
@@ -163,40 +201,69 @@ def compare_names(
         {
             "ocr_normalized": str,
             "user_normalized": str,
+            "match_tier": "exact" | "token_set" | "fuzzy" | "none",
             "exact_match": bool,
-            "similarity_score": float,
-            "token_overlap": float,
+            "token_set_match": bool,
+            "fuzzy_score": float,
             "final_score": float
         }
     """
-    # Normalize based on language
+    # Step 1: Normalize based on language
     if language == "arabic":
         ocr_normalized = normalize_arabic_name(ocr_name)
         user_normalized = normalize_arabic_name(user_name)
+        fuzzy_threshold = FUZZY_THRESHOLD_ARABIC
     else:
         ocr_normalized = normalize_english_name(ocr_name)
         user_normalized = normalize_english_name(user_name)
+        fuzzy_threshold = FUZZY_THRESHOLD_ENGLISH
     
-    # Check exact match on normalized text
-    exact_match = ocr_normalized == user_normalized
-    
-    # Calculate similarity scores
-    similarity_score = calculate_string_similarity(ocr_normalized, user_normalized)
-    token_overlap = calculate_token_overlap(ocr_normalized, user_normalized)
-    
-    # Final score is weighted average:
-    # - 70% string similarity (character-level)
-    # - 30% token overlap (word-level)
-    final_score = (0.7 * similarity_score) + (0.3 * token_overlap)
-    
-    return {
+    result = {
         "ocr_normalized": ocr_normalized,
         "user_normalized": user_normalized,
-        "exact_match": exact_match,
-        "similarity_score": similarity_score,
-        "token_overlap": token_overlap,
-        "final_score": final_score
+        "match_tier": "none",
+        "exact_match": False,
+        "token_set_match": False,
+        "fuzzy_score": 0.0,
+        "final_score": 0.0
     }
+    
+    # Handle empty strings
+    if not ocr_normalized or not user_normalized:
+        return result
+    
+    # Tier 1: Exact Match
+    if ocr_normalized == user_normalized:
+        result["exact_match"] = True
+        result["token_set_match"] = True
+        result["fuzzy_score"] = 1.0
+        result["final_score"] = 1.0
+        result["match_tier"] = "exact"
+        return result
+    
+    # Tokenize
+    ocr_tokens = ocr_normalized.split()
+    user_tokens = user_normalized.split()
+    ocr_token_set = set(ocr_tokens)
+    user_token_set = set(user_tokens)
+    
+    # Tier 2: Token-Set Match (order-invariant)
+    if _token_set_match(ocr_token_set, user_token_set):
+        result["token_set_match"] = True
+        result["fuzzy_score"] = 1.0
+        result["final_score"] = 1.0
+        result["match_tier"] = "token_set"
+        return result
+    
+    # Tier 3: Proportional Fuzzy Match
+    fuzzy_score = _proportional_fuzzy_score(
+        ocr_tokens, user_tokens, fuzzy_threshold
+    )
+    result["fuzzy_score"] = fuzzy_score
+    result["final_score"] = fuzzy_score
+    result["match_tier"] = "fuzzy"
+    
+    return result
 
 
 def validate_name_match(
@@ -273,7 +340,6 @@ def validate_name_match(
         return results
     
     # Combined score is average of available comparisons
-    # (Both languages should match well for high confidence)
     results["combined_score"] = sum(scores) / len(scores)
     
     # Apply OCR confidence multiplier
