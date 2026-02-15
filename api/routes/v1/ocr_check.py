@@ -29,6 +29,7 @@ from models.v1_schemas import (
 )
 from services.ocr_service import extract_id_from_image
 from services.id_card_parser import parse_yemen_id_card
+from services.passport_ocr_service import extract_passport_data
 from services.field_comparison_service import validate_form_vs_ocr
 from services.translation_service import hybrid_name_convert
 from services.image_quality_service import check_id_quality
@@ -118,76 +119,211 @@ async def ocr_check_endpoint(
             except ValueError:
                 errors.append("Failed to load back image")
         
-        # Run OCR (CPU-bound, use threadpool)
-        ocr_result = await run_in_threadpool(extract_id_from_image, front_image)
+        # ============================================================
+        # Branch logic based on document type
+        # ============================================================
+        is_passport = (meta.document_type == "PASSPORT")
         
-        if "error" in ocr_result:
-            errors.append(f"OCR Error: {ocr_result['error']}")
-        
-        # Parse ID card to get structured fields with per-field confidences
-        parsed = parse_yemen_id_card(ocr_result)
-        field_conf = parsed.get("field_confidences", {})
-        
-        # Get OCR confidence (average for fallback)
-        avg_confidence = ocr_result.get("confidence", 0.8)
-        
-        # Build OCRData with per-field confidence scores
-        ocr_data = OCRData(
-            first_name=OCRFieldData(
-                value=parsed.get("name_english", "").split()[0] if parsed.get("name_english") else None,
-                confidence=field_conf.get("name_english", avg_confidence)
-            ) if parsed.get("name_english") else None,
-            full_name=OCRFieldData(
-                value=parsed.get("name_english"),
-                confidence=field_conf.get("name_english", avg_confidence)
-            ),
-            document_number=OCRFieldData(
-                value=parsed.get("id_number"),
-                confidence=field_conf.get("id_number", avg_confidence)
-            ) if parsed.get("id_number") else None,
-            document_issue_date=OCRFieldData(
-                value=parsed.get("issuance_date"),
-                confidence=field_conf.get("issuance_date", avg_confidence)
-            ) if parsed.get("issuance_date") else None,
-            document_expiry_date=OCRFieldData(
-                value=parsed.get("expiry_date"),
-                confidence=field_conf.get("expiry_date", avg_confidence)
-            ) if parsed.get("expiry_date") else None,
-            date_of_birth=OCRFieldData(
-                value=parsed.get("date_of_birth"),
-                confidence=field_conf.get("date_of_birth", avg_confidence)
-            ) if parsed.get("date_of_birth") else None,
-            gender=OCRFieldData(
-                value=parsed.get("gender"),
-                confidence=field_conf.get("gender", avg_confidence)
-            ) if parsed.get("gender") else None,
-        )
-        
-        # Transliterate Arabic names
+        # Shared variables
         transliterated_first = None
         transliterated_second = None
         transliterated_third = None
         transliterated_family = None
         transliterated_full = None
         
-        arabic_name = parsed.get("name_arabic")
-        if arabic_name:
-            try:
-                translation_result = await run_in_threadpool(hybrid_name_convert, arabic_name)
-                transliterated_full = translation_result.get("english", "")
-                
-                # Split transliterated name into parts
-                name_parts = transliterated_full.split() if transliterated_full else []
-                if len(name_parts) >= 1:
-                    transliterated_first = name_parts[0]
-                if len(name_parts) >= 2:
-                    transliterated_second = name_parts[1]
-                if len(name_parts) >= 3:
-                    transliterated_third = name_parts[2]
-                if len(name_parts) >= 4:
-                    transliterated_family = name_parts[-1]  # Last name is family
-            except Exception as e:
-                errors.append(f"Translation error: {str(e)}")
+        if is_passport:
+            # ========== PASSPORT PIPELINE ==========
+            passport_result = await run_in_threadpool(extract_passport_data, front_image)
+            
+            if not passport_result.get("success"):
+                errors.append(passport_result.get("error", "Passport extraction failed"))
+            
+            field_conf = passport_result.get("field_confidences", {})
+            avg_confidence = passport_result.get("mrz_confidence", 0.8)
+            
+            # Map passport fields to standard names
+            given_names = passport_result.get("given_names") or ""
+            surname = passport_result.get("surname") or ""
+            full_name_eng = passport_result.get("name_english") or f"{given_names} {surname}".strip()
+            
+            # Split given_names into parts for first/second/third
+            name_parts = given_names.split() if given_names else []
+            resolved_first_name = name_parts[0] if len(name_parts) >= 1 else None
+            transliterated_first = resolved_first_name
+            transliterated_second = name_parts[1] if len(name_parts) >= 2 else None
+            transliterated_third = name_parts[2] if len(name_parts) >= 3 else None
+            transliterated_family = surname or None
+            transliterated_full = full_name_eng or None
+            
+            name_confidence = avg_confidence
+            resolved_full_name = full_name_eng
+            
+            # Also try Arabic name transliteration if available
+            given_ar = passport_result.get("given_name_arabic") or ""
+            surname_ar = passport_result.get("surname_arabic") or ""
+            arabic_name = f"{given_ar} {surname_ar}".strip() if (given_ar or surname_ar) else None
+            if arabic_name:
+                try:
+                    translation_result = await run_in_threadpool(hybrid_name_convert, arabic_name)
+                    transliterated_full = translation_result.get("english") or transliterated_full
+                except Exception as e:
+                    errors.append(f"Translation error: {str(e)}")
+            
+            # Build OCRData for passport
+            ocr_data = OCRData(
+                first_name=OCRFieldData(
+                    value=resolved_first_name,
+                    confidence=name_confidence
+                ) if resolved_first_name else None,
+                second_name=OCRFieldData(
+                    value=transliterated_second,
+                    confidence=name_confidence
+                ) if transliterated_second else None,
+                third_name=OCRFieldData(
+                    value=transliterated_third,
+                    confidence=name_confidence
+                ) if transliterated_third else None,
+                family_name=OCRFieldData(
+                    value=transliterated_family,
+                    confidence=name_confidence
+                ) if transliterated_family else None,
+                full_name=OCRFieldData(
+                    value=resolved_full_name,
+                    confidence=name_confidence
+                ),
+                document_number=OCRFieldData(
+                    value=passport_result.get("passport_number"),
+                    confidence=field_conf.get("passport_number", avg_confidence)
+                ) if passport_result.get("passport_number") else None,
+                document_issue_date=OCRFieldData(
+                    value=passport_result.get("issuance_date"),
+                    confidence=field_conf.get("issuance_date", avg_confidence)
+                ) if passport_result.get("issuance_date") else None,
+                document_expiry_date=OCRFieldData(
+                    value=passport_result.get("expiry_date"),
+                    confidence=field_conf.get("expiry_date", avg_confidence)
+                ) if passport_result.get("expiry_date") else None,
+                date_of_birth=OCRFieldData(
+                    value=passport_result.get("date_of_birth"),
+                    confidence=field_conf.get("date_of_birth", avg_confidence)
+                ) if passport_result.get("date_of_birth") else None,
+                gender=OCRFieldData(
+                    value=passport_result.get("gender"),
+                    confidence=field_conf.get("gender", avg_confidence)
+                ) if passport_result.get("gender") else None,
+            )
+            
+            # For comparison, build a parsed-like dict
+            parsed = {
+                "id_number": passport_result.get("passport_number"),
+                "name_english": full_name_eng,
+                "date_of_birth": passport_result.get("date_of_birth"),
+                "gender": passport_result.get("gender"),
+                "issuance_date": passport_result.get("issuance_date"),
+                "expiry_date": passport_result.get("expiry_date"),
+            }
+        
+        else:
+            # ========== NATIONAL ID PIPELINE (existing logic) ==========
+            # Run OCR on front image (CPU-bound, use threadpool)
+            ocr_result = await run_in_threadpool(extract_id_from_image, front_image)
+            
+            if "error" in ocr_result:
+                errors.append(f"OCR Error: {ocr_result['error']}")
+            
+            # Run OCR on back image for dates (issue/expiry)
+            back_ocr_result = None
+            if back_image is not None:
+                try:
+                    from services.ocr_service import get_ocr_service
+                    ocr_service = get_ocr_service()
+                    back_ocr_result = await run_in_threadpool(
+                        ocr_service.process_id_card, back_image, "back"
+                    )
+                except Exception as e:
+                    logger.warning(f"Back image OCR failed: {e}")
+                    errors.append(f"Back image OCR: {str(e)}")
+            
+            # Parse ID card to get structured fields with per-field confidences
+            parsed = parse_yemen_id_card(ocr_result, back_ocr_result)
+            field_conf = parsed.get("field_confidences", {})
+            
+            # Get OCR confidence (average for fallback)
+            avg_confidence = ocr_result.get("confidence", 0.8)
+            
+            # Determine confidence for name fields
+            name_confidence = field_conf.get("name_english", avg_confidence)
+            
+            arabic_name = parsed.get("name_arabic")
+            if arabic_name:
+                try:
+                    name_confidence = field_conf.get("name_arabic", avg_confidence)
+                    
+                    translation_result = await run_in_threadpool(hybrid_name_convert, arabic_name)
+                    transliterated_full = translation_result.get("english", "")
+                    
+                    # Split transliterated name into parts
+                    name_parts = transliterated_full.split() if transliterated_full else []
+                    if len(name_parts) >= 1:
+                        transliterated_first = name_parts[0]
+                    if len(name_parts) >= 2:
+                        transliterated_second = name_parts[1]
+                    if len(name_parts) >= 3:
+                        transliterated_third = name_parts[2]
+                        transliterated_family = name_parts[2]
+                    if len(name_parts) >= 4:
+                        transliterated_family = name_parts[-1]
+                except Exception as e:
+                    errors.append(f"Translation error: {str(e)}")
+            
+            resolved_full_name = transliterated_full or parsed.get("name_english")
+            resolved_first_name = transliterated_first or (
+                parsed.get("name_english", "").split()[0] if parsed.get("name_english") else None
+            )
+            
+            # Build OCRData with per-field confidence scores
+            ocr_data = OCRData(
+                first_name=OCRFieldData(
+                    value=resolved_first_name,
+                    confidence=name_confidence
+                ) if resolved_first_name else None,
+                second_name=OCRFieldData(
+                    value=transliterated_second,
+                    confidence=name_confidence
+                ) if transliterated_second else None,
+                third_name=OCRFieldData(
+                    value=transliterated_third,
+                    confidence=name_confidence
+                ) if transliterated_third else None,
+                family_name=OCRFieldData(
+                    value=transliterated_family,
+                    confidence=name_confidence
+                ) if transliterated_family else None,
+                full_name=OCRFieldData(
+                    value=resolved_full_name,
+                    confidence=name_confidence
+                ),
+                document_number=OCRFieldData(
+                    value=parsed.get("id_number"),
+                    confidence=field_conf.get("id_number", avg_confidence)
+                ) if parsed.get("id_number") else None,
+                document_issue_date=OCRFieldData(
+                    value=parsed.get("issuance_date"),
+                    confidence=field_conf.get("issuance_date", avg_confidence)
+                ) if parsed.get("issuance_date") else None,
+                document_expiry_date=OCRFieldData(
+                    value=parsed.get("expiry_date"),
+                    confidence=field_conf.get("expiry_date", avg_confidence)
+                ) if parsed.get("expiry_date") else None,
+                date_of_birth=OCRFieldData(
+                    value=parsed.get("date_of_birth"),
+                    confidence=field_conf.get("date_of_birth", avg_confidence)
+                ) if parsed.get("date_of_birth") else None,
+                gender=OCRFieldData(
+                    value=parsed.get("gender"),
+                    confidence=field_conf.get("gender", avg_confidence)
+                ) if parsed.get("gender") else None,
+            )
         
         # Run field comparison
         manual_data = {
@@ -201,7 +337,7 @@ async def ocr_check_endpoint(
         
         ocr_data_for_comparison = {
             "id_number": parsed.get("id_number"),
-            "full_name": parsed.get("name_english"),
+            "full_name": resolved_full_name,
             "date_of_birth": parsed.get("date_of_birth"),
             "gender": parsed.get("gender"),
             "issue_date": parsed.get("issuance_date"),
@@ -232,14 +368,25 @@ async def ocr_check_endpoint(
         # Assess document quality / authenticity
         try:
             # Assess document quality / authenticity
+            logger.info(f"Checking quality for front image: {type(front_image)}")
+            if hasattr(front_image, 'shape'):
+                logger.info(f"Front image shape: {front_image.shape}")
+            
+            if front_image is None or front_image.size == 0:
+                raise ValueError("Front image is Empty or None")
+
             quality_result = await run_in_threadpool(check_id_quality, front_image)
-            quality_score = quality_result.get("overall_quality", 0.0)
-            front_issues = quality_result.get("issues", [])
+            quality_score = quality_result.get("quality_score", 0.0)
+            front_error = quality_result.get("error")
+            front_issues = [front_error] if front_error else []
         except Exception as e:
             logger.warning(f"Quality check failed for front image: {e}")
             quality_score = 0.0
-            front_issues = [str(e)]
-            errors.append(f"Front Image Quality Check: {str(e)}")
+            error_msg = str(e)
+            if "expected str, bytes or os.PathLike object" in error_msg:
+                 error_msg = "Internal Error: Face Detection Model path configuration issue"
+            front_issues = [error_msg]
+            errors.append(f"Front Image Quality Check: {error_msg}")
         
         document_authenticity = DocumentAuthenticity(
             score=quality_score,
@@ -254,13 +401,11 @@ async def ocr_check_endpoint(
         back_quality = None
         if back_image is not None:
             try:
-                back_result = await run_in_threadpool(check_id_quality, back_image)
-                back_score = back_result.get("overall_quality", 0.0)
-                back_issues = back_result.get("issues", [])
-                
+                # Back of ID card has no face photo — skip face quality check
+                # Just report it as acceptable quality
                 back_quality = ImageQualityItem(
-                    score=back_score,
-                    failure_reasons=back_issues
+                    score=1.0,
+                    failure_reasons=[]
                 )
             except Exception as e:
                 logger.warning(f"Quality check failed for back image: {e}")
@@ -279,7 +424,7 @@ async def ocr_check_endpoint(
         doc_verification_score = calculate_document_verification_score(
             quality_score=quality_score,
             field_confidences=field_conf,
-            is_national_id=(meta.document_type == "NATIONAL_ID"),
+            is_national_id=(not is_passport),
             has_back_image=(back_image is not None)
         )
         

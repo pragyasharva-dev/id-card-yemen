@@ -25,23 +25,8 @@ os.environ["DISABLE_MODEL_SOURCE_CHECK"] = "True"
 
 from paddleocr import PaddleOCR
 
-# Try to import Tesseract for digit validation
-try:
-    import pytesseract
-    # Configure Tesseract path for Windows
-    import platform
-    if platform.system() == 'Windows':
-        tesseract_paths = [
-            r'C:\Program Files\Tesseract-OCR\tesseract.exe',
-            r'C:\Program Files (x86)\Tesseract-OCR\tesseract.exe',
-        ]
-        for path in tesseract_paths:
-            if Path(path).exists():
-                pytesseract.pytesseract.tesseract_cmd = path
-                break
-    TESSERACT_AVAILABLE = True
-except ImportError:
-    TESSERACT_AVAILABLE = False
+# Tesseract support removed
+TESSERACT_AVAILABLE = False
 
 from utils.config import ID_PATTERNS, OCR_CONFIDENCE_THRESHOLD
 from utils.ocr_utils import add_ocr_padding, parse_paddleocr_result
@@ -208,22 +193,34 @@ class OCRService:
             
             # Offline support
             from utils.config import PADDLEOCR_MODEL_DIR
-            if PADDLEOCR_MODEL_DIR.exists():
-                logger.info(f"Using offline PaddleOCR models from: {PADDLEOCR_MODEL_DIR}")
-                # Note: We aren't setting specific model dirs here because PaddleOCR 
-                # structure is complex (rec/det/cls folders). 
-                # Instead, we rely on the download script having placed them in ~/.paddleocr 
-                # OR we set the base_dir if the library supports it.
-                #
-                # Correct approach for custom model dir in PaddleOCR 2.7+:
-                # It's better to rely on the default ~/.paddleocr if we pre-seeded it,
-                # BUT we want to use 'models/paddleocr'.
-                # 
-                # If we set specific paths:
-                # model_args['det_model_dir'] = str(PADDLEOCR_MODEL_DIR / 'en_PP-OCRv3_det_infer')
-                # model_args['rec_model_dir'] = str(PADDLEOCR_MODEL_DIR / 'en_PP-OCRv3_rec_infer')
-                # model_args['cls_model_dir'] = str(PADDLEOCR_MODEL_DIR / 'ch_ppocr_mobile_v2.0_cls_infer')
-                pass
+            import shutil
+
+            # Runtime check: Copy models from mounted volume to ~/.paddleocr if needed
+            paddle_home = Path.home() / ".paddleocr"
+            # Optimization: Only copy if local cache is missing but mounted volume has models
+            if PADDLEOCR_MODEL_DIR.exists() and any(PADDLEOCR_MODEL_DIR.iterdir()):
+                # We assume if the cache dir exists and has content, it's good. 
+                # But to be safe for offline, we can check a specific subfolder or just rely on existence.
+                # Simplest check: if paddle_home doesn't validly exist, copy.
+                if not paddle_home.exists() or not any(paddle_home.iterdir()):
+                    logger.info(f"Copying offline PaddleOCR models from {PADDLEOCR_MODEL_DIR} to {paddle_home}...")
+                    try:
+                        paddle_home.mkdir(parents=True, exist_ok=True)
+                        for item in PADDLEOCR_MODEL_DIR.iterdir():
+                            dest = paddle_home / item.name
+                            if item.is_dir():
+                                if dest.exists():
+                                    shutil.rmtree(dest)
+                                shutil.copytree(item, dest)
+                            else:
+                                shutil.copy2(item, dest)
+                        logger.info("PaddleOCR models copied successfully.")
+                    except Exception as e:
+                        logger.warning(f"Failed to copy PaddleOCR models: {e}")
+                else:
+                     logger.info(f"PaddleOCR models found in {paddle_home}, skipping copy.")
+            else:
+                 logger.info(f"No offline models found in {PADDLEOCR_MODEL_DIR}, PaddleOCR will try to download if needed.")
 
             OCRService._ocr_models['en'] = PaddleOCR(**model_args)
             logger.info("English OCR model loaded.")

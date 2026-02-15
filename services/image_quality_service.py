@@ -140,6 +140,7 @@ def _check_face_region_occlusion(image: np.ndarray, kps, bbox) -> bool:
     Returns:
         True if face region appears occluded
     """
+    import numpy as np
     if bbox is None or len(bbox) < 4:
         return False
     
@@ -262,6 +263,7 @@ def _verify_landmark_visible(image: np.ndarray, x: int, y: int, landmark_idx: in
     Returns:
         True if landmark appears to be genuinely visible
     """
+    import numpy as np
     import logging
     logger = logging.getLogger(__name__)
     
