@@ -141,12 +141,14 @@ from api.test_routes import test_router
 from api.routes.metrics import router as metrics_router
 from api.routes.v1.ocr_check import router as ocr_check_router
 from api.routes.v1.face_match import router as face_match_router
+from api.routes.sdk_orchestrator import router as sdk_router
 from api.routes.admin_config import router as admin_config_router
 
 # Production routes under /api/v1
 app.include_router(production_router, prefix="/api/v1")
 app.include_router(ocr_check_router, prefix="/api/v1")
 app.include_router(face_match_router, prefix="/api/v1")
+app.include_router(sdk_router, prefix="/api/v1")
 
 # Admin routes
 app.include_router(admin_config_router, prefix="/api")
