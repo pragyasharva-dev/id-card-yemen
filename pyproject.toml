@@ -36,3 +36,5 @@ dev = [
     "ngrok>=1.4.0",
 ]
 
+[tool.setuptools]
+packages = ["api", "services", "utils", "models", "middleware"]
