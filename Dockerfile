@@ -39,7 +39,9 @@ WORKDIR /app
 FROM base AS deps
 
 # Copy dependency file
-COPY pyproject.toml .
+# Copy application code (needed for pip install .)
+COPY . .
+
 # Install dependencies directly from pyproject.toml
 # Install build tools needed for InsightFace compilation, then clean up
 RUN apt-get update && apt-get install -y --no-install-recommends build-essential python3-dev && \
@@ -47,23 +49,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends build-essential
     apt-get purge -y --auto-remove build-essential python3-dev && \
     rm -rf /var/lib/apt/lists/*
 
-# =============================================================================
-# Production Stage
-# =============================================================================
-FROM deps AS production
-
-# Set offline model paths
-ENV MODELS_DIR=/app/models \
-    INSIGHTFACE_HOME=/app/models/insightface \
-    PERSIST_IMAGES=false
-
-# Copy application code
-COPY . .
-
 # Pre-seed PaddleOCR cache for offline mode (simplest way to make PaddleOCR find models)
 # The download script puts them in models/paddleocr. We copy them to expected cache location.
-RUN mkdir -p /root/.paddleocr && \
-    cp -r /app/models/paddleocr/* /root/.paddleocr/ || true
+# RUN mkdir -p /root/.paddleocr && \
+#     cp -r /app/models/paddleocr/* /root/.paddleocr/ || true
+# NOW handled at runtime in ocr_service.py to support external volumes
 
 # Create necessary directories
 RUN mkdir -p /app/data/id_cards /app/data/selfies /app/data/processed
