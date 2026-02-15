@@ -62,8 +62,9 @@ COPY . .
 
 # Pre-seed PaddleOCR cache for offline mode (simplest way to make PaddleOCR find models)
 # The download script puts them in models/paddleocr. We copy them to expected cache location.
-RUN mkdir -p /root/.paddleocr && \
-    cp -r /app/models/paddleocr/* /root/.paddleocr/ || true
+# RUN mkdir -p /root/.paddleocr && \
+#     cp -r /app/models/paddleocr/* /root/.paddleocr/ || true
+# NOW handled at runtime in ocr_service.py to support external volumes
 
 # Create necessary directories
 RUN mkdir -p /app/data/id_cards /app/data/selfies /app/data/processed
