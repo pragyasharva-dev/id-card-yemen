@@ -184,7 +184,10 @@ def _simple_metaphone(text: str) -> str:
         elif c == 'X':
             result.append('KS')
         elif c == 'Y':
-            result.append('Y')
+            # Treat Y as consonant only if followed by a vowel
+            if i + 1 < len(text) and text[i + 1] in 'AEIOU':
+                result.append('Y')
+            # Otherwise treat as vowel (dropped)
         elif c == 'Z':
             result.append('S')
         i += 1

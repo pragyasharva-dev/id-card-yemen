@@ -22,6 +22,7 @@ from utils.config import PROCESSED_DIR
 
 # New Policy Service
 from services.verification_policy import VerificationPolicyService
+from services.transliteration_core import arabic_to_latin
 import uuid
 
 
@@ -60,6 +61,18 @@ def _compare_name(user_input: Optional[str], parsed_data: dict) -> float:
     else:
         ocr_name = parsed_data.get("name_english")
         language = "english"
+
+    if not ocr_name:
+        # Cross-language fallback:
+        # If user input is English but we only have Arabic OCR, try transliterating
+        if language == "english":
+            arabic_ocr = parsed_data.get("name_arabic")
+            if arabic_ocr:
+                try:
+                    ocr_name = arabic_to_latin(arabic_ocr)
+                    print(f"[NAME_MATCH] Cross-language fallback: transliterated '{arabic_ocr}' -> '{ocr_name}'")
+                except Exception as e:
+                    print(f"[NAME_MATCH] Transliteration failed: {e}")
 
     if not ocr_name:
         print(f"[NAME_MATCH] No OCR name for {language}")
