@@ -41,14 +41,7 @@ def test_passporteye(image_path: str):
         print("\n💡 Install with: pip install passporteye")
         return None
     
-    # Check for Tesseract
-    try:
-        import pytesseract
-        pytesseract.get_tesseract_version()
-        print("✅ Tesseract OCR found")
-    except Exception as e:
-        print(f"⚠️ Tesseract warning: {e}")
-        print("💡 Install Tesseract: https://github.com/UB-Mannheim/tesseract")
+
     
     print("\n🔍 Detecting and extracting MRZ...")
     print("-" * 40)
