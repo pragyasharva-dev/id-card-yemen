@@ -120,3 +120,5 @@ data/databases/*.db
 # ML Models directory (large files, downloaded via scripts/download_models.py)
 models/paddleocr/
 models/insightface/
+
+docs/
