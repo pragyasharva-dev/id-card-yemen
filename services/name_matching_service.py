@@ -19,6 +19,7 @@ from typing import Optional, Literal
 import logging
 import re
 from difflib import SequenceMatcher
+from services.transliteration_core import arabic_to_latin
 
 logger = logging.getLogger(__name__)
 
@@ -73,6 +74,123 @@ def normalize_arabic_name(text: str) -> str:
     return text
 
 
+# Compound name patterns for Arabic-origin English names
+# These are split before tokenization so token counts match
+_ENGLISH_COMPOUND_PATTERNS = [
+    (r'\babdulrahman\b', 'abdul rahman'),
+    (r'\babdulaziz\b', 'abdul aziz'),
+    (r'\babdulmalik\b', 'abdul malik'),
+    (r'\babdulkarim\b', 'abdul karim'),
+    (r'\babdullatif\b', 'abdul latif'),
+    (r'\babdullah\b', 'abd allah'),
+    (r'\babdallah\b', 'abd allah'),
+    (r'\babdelmajid\b', 'abd el majid'),
+    (r'\babdelrahman\b', 'abd el rahman'),
+    (r'\babdul\b', 'abd al'),
+    (r'\babdel\b', 'abd el'),
+]
+
+
+def _normalize_english_compounds(text: str) -> str:
+    """
+    Split common Arabic compound name forms in English text.
+    
+    E.g. "abdulrahman" → "abdul rahman", "alsayed" → "al sayed"
+    This ensures token counts match between different spellings.
+    """
+    if not text:
+        return text
+    
+    # Split compound names
+    for pattern, replacement in _ENGLISH_COMPOUND_PATTERNS:
+        text = re.sub(pattern, replacement, text)
+    
+    # Normalize al-/el- prefix variants
+    # "al-sayed" or "alsayed" → "al sayed"
+    text = re.sub(r'\bal-', 'al ', text)
+    text = re.sub(r'\bel-', 'el ', text)
+    # "alsayed" (no hyphen/space) → "al sayed" only for words > 4 chars
+    text = re.sub(r'\bal([a-z]{3,})\b', r'al \1', text)
+    
+    # Clean up multiple spaces
+    text = re.sub(r'\s+', ' ', text).strip()
+    return text
+
+
+def _simple_metaphone(text: str) -> str:
+    """
+    Simple metaphone encoding for phonetic matching of transliteration variants.
+    Maps sounds to a canonical form so Mohammed/Muhammad/Mohammad all encode similarly.
+    """
+    if not text:
+        return ""
+    text = text.upper()
+    result = []
+    i = 0
+    while i < len(text):
+        c = text[i]
+        if not c.isalpha():
+            i += 1
+            continue
+        if c in 'AEIOU':
+            if i == 0:
+                result.append('A')
+            i += 1
+            continue
+        if c == 'B':
+            result.append('P')
+        elif c == 'C':
+            result.append('S' if (i + 1 < len(text) and text[i + 1] in 'EIY') else 'K')
+        elif c == 'D':
+            result.append('T')
+        elif c == 'F':
+            result.append('F')
+        elif c == 'G':
+            result.append('J' if (i + 1 < len(text) and text[i + 1] in 'EIY') else 'K')
+        elif c == 'H':
+            result.append('H')
+        elif c == 'J':
+            result.append('J')
+        elif c == 'K':
+            result.append('K')
+        elif c == 'L':
+            result.append('L')
+        elif c == 'M':
+            result.append('M')
+        elif c == 'N':
+            result.append('N')
+        elif c == 'P':
+            result.append('P')
+        elif c == 'Q':
+            result.append('K')
+        elif c == 'R':
+            result.append('R')
+        elif c == 'S':
+            if i + 1 < len(text) and text[i + 1] == 'H':
+                result.append('X')
+                i += 1
+            else:
+                result.append('S')
+        elif c == 'T':
+            if i + 1 < len(text) and text[i + 1] == 'H':
+                result.append('0')
+                i += 1
+            else:
+                result.append('T')
+        elif c == 'V':
+            result.append('F')
+        elif c == 'W':
+            result.append('W')
+        elif c == 'X':
+            result.append('KS')
+        elif c == 'Y':
+            result.append('Y')
+        elif c == 'Z':
+            result.append('S')
+        i += 1
+    return ''.join(result)
+
+
 def normalize_english_name(text: str) -> str:
     """
     Normalize English name text for consistent matching.
@@ -81,6 +199,7 @@ def normalize_english_name(text: str) -> str:
     - Convert to lowercase
     - Remove extra whitespace
     - Remove special characters except spaces and hyphens
+    - Split compound Arabic-origin names (e.g. Abdulrahman → Abdul Rahman)
     
     Args:
         text: Raw English name
@@ -101,6 +220,9 @@ def normalize_english_name(text: str) -> str:
     # Remove non-alphabetic characters except spaces and hyphens
     text = re.sub(r'[^a-z\s\-]', '', text)
     
+    # Split compound Arabic-origin names
+    text = _normalize_english_compounds(text)
+    
     return text
 
 
@@ -118,10 +240,52 @@ def _token_set_match(tokens1: set, tokens2: set) -> bool:
     return tokens1 == tokens2 and len(tokens1) > 0
 
 
+def _token_similarity(token1: str, token2: str, use_phonetic: bool = False) -> float:
+    """
+    Calculate similarity between two tokens, optionally boosted by phonetic matching.
+    
+    Uses SequenceMatcher as baseline. When use_phonetic=True, also checks
+    metaphone codes — if tokens are phonetically equivalent (e.g. Mohammed/Muhammad),
+    the score is boosted.
+    
+    Args:
+        token1: First token
+        token2: Second token
+        use_phonetic: Whether to apply phonetic boost (for English transliterations)
+        
+    Returns:
+        Similarity score 0.0 - 1.0
+    """
+    # Baseline: character-level similarity
+    char_score = SequenceMatcher(None, token1, token2).ratio()
+    
+    if not use_phonetic:
+        return char_score
+    
+    # Phonetic boost: if metaphone codes match, boost the score
+    meta1 = _simple_metaphone(token1)
+    meta2 = _simple_metaphone(token2)
+    
+    if meta1 and meta2 and meta1 == meta2:
+        # Phonetically identical → boost to at least 0.92
+        return max(char_score, 0.92)
+    
+    # Partial phonetic similarity via SequenceMatcher on metaphone codes
+    if meta1 and meta2:
+        phonetic_score = SequenceMatcher(None, meta1, meta2).ratio()
+        if phonetic_score >= 0.8:
+            # Strong phonetic similarity → blend with character score
+            boosted = 0.6 * char_score + 0.4 * phonetic_score
+            return max(char_score, boosted)
+    
+    return char_score
+
+
 def _proportional_fuzzy_score(
     ocr_tokens: list,
     user_tokens: list,
-    threshold: float
+    threshold: float,
+    use_phonetic: bool = False
 ) -> float:
     """
     Calculate proportional fuzzy match score between token lists.
@@ -129,10 +293,14 @@ def _proportional_fuzzy_score(
     For each OCR token, find the best-matching user token.
     A token counts as "matched" if its best similarity >= threshold.
     
+    When use_phonetic=True, uses phonetic similarity boost for
+    Arabic transliteration variants (Mohammed/Muhammad etc.).
+    
     Args:
         ocr_tokens: Tokens from OCR-extracted name
         user_tokens: Tokens from user-entered name
         threshold: Minimum similarity for a token to count as matched
+        use_phonetic: Whether to apply phonetic boost (English names)
         
     Returns:
         Proportional score (matched_tokens / max_tokens), 0.0 - 1.0
@@ -151,12 +319,12 @@ def _proportional_fuzzy_score(
         for j, user_token in enumerate(user_tokens):
             if j in used_user_indices:
                 continue
-            score = SequenceMatcher(None, ocr_token, user_token).ratio()
+            score = _token_similarity(ocr_token, user_token, use_phonetic=use_phonetic)
             if score > best_score:
                 best_score = score
                 best_idx = j
         
-        if best_score >= threshold and best_idx >= 0:
+        if best_score >= threshold and best_idx != -1:
             matched_count += 1
             used_user_indices.add(best_idx)
             total_similarity += best_score
@@ -256,9 +424,25 @@ def compare_names(
         return result
     
     # Tier 3: Proportional Fuzzy Match
+    use_phonetic = (language == "english")
     fuzzy_score = _proportional_fuzzy_score(
-        ocr_tokens, user_tokens, fuzzy_threshold
+        ocr_tokens, user_tokens, fuzzy_threshold, use_phonetic=use_phonetic
     )
+    
+    # Tier 3b: Full-string fuzzy fallback for English names
+    # When token counts differ (e.g. "Abdulrahman" vs "Abdul Rahman" after
+    # compound splitting), per-token matching can undercount. Use the max
+    # of token-level and full-string scores as a safety net.
+    if language == "english":
+        full_string_score = SequenceMatcher(None, ocr_normalized, user_normalized).ratio()
+        # Also try phonetic full-string comparison
+        ocr_meta = _simple_metaphone(ocr_normalized)
+        user_meta = _simple_metaphone(user_normalized)
+        if ocr_meta and user_meta:
+            phonetic_full = SequenceMatcher(None, ocr_meta, user_meta).ratio()
+            full_string_score = max(full_string_score, phonetic_full)
+        fuzzy_score = max(fuzzy_score, full_string_score)
+    
     result["fuzzy_score"] = fuzzy_score
     result["final_score"] = fuzzy_score
     result["match_tier"] = "fuzzy"
@@ -323,7 +507,35 @@ def validate_name_match(
             user_name_english,
             language="english"
         )
-    
+        
+    # CROSS-LANGUAGE COMPARISON (Arabic OCR -> English User)
+    # If we have Arabic OCR and English User input, but missing/poor English OCR,
+    # try transliterating Arabic OCR to English and comparing.
+    if ocr_name_arabic and user_name_english:
+        # Check if we should run this:
+        # Run if no English comparison OR if matches are weak/conflicting
+        should_run_cross = (
+            not results["english_comparison"] or 
+            (results["english_comparison"]["final_score"] < pass_threshold and 
+             not results["arabic_comparison"])
+        )
+        
+        if should_run_cross:
+            try:
+                # Transliterate Arabic OCR to Latin
+                transliterated_ocr = arabic_to_latin(ocr_name_arabic)
+                if transliterated_ocr:
+                    cross_result = compare_names(
+                        transliterated_ocr,
+                        user_name_english,
+                        language="english"
+                    )
+                    # Add to results if it's a good match, or if it's the ONLY match
+                    # We store it in a special key but also consider it for scoring
+                    results["cross_language_comparison"] = cross_result
+            except Exception as e:
+                logger.warning(f"Cross-language matching failed: {e}")
+
     # Calculate combined score
     scores = []
     
@@ -332,6 +544,16 @@ def validate_name_match(
     
     if results["english_comparison"]:
         scores.append(results["english_comparison"]["final_score"])
+        
+    # Incorporate cross-language score if it exists and helps
+    if results.get("cross_language_comparison"):
+        cross_score = results["cross_language_comparison"]["final_score"]
+        # If we have other scores, only include cross-match if it's supportive (boosts confidence)
+        # or if it's the only evidence we have.
+        if not scores:
+            scores.append(cross_score)
+        elif cross_score > 0.8: # Only boost if it's a strong match
+            scores.append(cross_score)
     
     if not scores:
         # No names to compare
@@ -340,6 +562,8 @@ def validate_name_match(
         return results
     
     # Combined score is average of available comparisons
+    # Use max() if we have a strong cross-match to rescue a failed OCR match?
+    # For now, average is safer to avoid false positives, but if cross-match is the ONLY one, it works.
     results["combined_score"] = sum(scores) / len(scores)
     
     # Apply OCR confidence multiplier

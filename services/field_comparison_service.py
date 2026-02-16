@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 
 from services.name_matching_service import validate_name_match_simple
 from services.place_of_birth_service import validate_place_of_birth
+from services.transliteration_core import arabic_to_latin
 from utils.config import (
     FIELD_CONFIGURATIONS, 
     DATE_TOLERANCE_DAYS, 
@@ -469,6 +470,21 @@ def validate_form_vs_ocr(
         if user_value is None and ocr_value is not None:
             if not is_high_severity:
                 continue  # Skip optional fields user didn't fill
+        
+        # CROSS-LANGUAGE FALLBACK: If name_english OCR is missing but
+        # name_arabic OCR exists, transliterate Arabic to English for comparison.
+        # This handles the case where OCR is strictly Arabic.
+        if field_name == "name_english" and not ocr_value and user_value:
+            arabic_ocr_name = ocr_data.get("name_arabic")
+            if arabic_ocr_name:
+                try:
+                    ocr_value = arabic_to_latin(arabic_ocr_name)
+                    logger.info(
+                        f"Cross-language fallback: transliterated Arabic OCR "
+                        f"'{arabic_ocr_name}' -> '{ocr_value}' for English name comparison"
+                    )
+                except Exception as e:
+                    logger.warning(f"Arabic-to-English transliteration failed: {e}")
         
         field_result = compare_field(
             field_name=field_name,
