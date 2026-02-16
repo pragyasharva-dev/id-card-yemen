@@ -1,6 +1,7 @@
 """e-KYC verification endpoints."""
 import cv2
-from fastapi import APIRouter, UploadFile, File, Depends
+from fastapi import APIRouter, UploadFile, File, Form, Depends
+from typing import Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.schemas import VerifyRequest, VerifyResponse, LivenessResult
@@ -11,18 +12,167 @@ from services.face_recognition import verify_identity
 from services.db import get_db
 from services.data_service import save_document, save_verification
 from services.image_quality_service import check_id_quality, check_selfie_quality
+from services.field_comparison_service import compare_exact, compare_dates_with_tolerance, compare_gender_with_fraud_check
+from services.name_matching_service import validate_name_match_simple, normalize_arabic_name, normalize_english_name
+from difflib import SequenceMatcher
+from services.yemen_id_validation_service import validate_yemen_id
 from utils.image_manager import load_image, save_image
 from utils.exceptions import AppError
 from utils.config import PROCESSED_DIR
 
+# New Policy Service
+from services.verification_policy import VerificationPolicyService
+from services.transliteration_core import arabic_to_latin
+import uuid
+
+
 router = APIRouter(tags=["Verification"])
 
+
+def _is_arabic(text: str) -> bool:
+    """Detect if text contains Arabic script."""
+    return any('\u0600' <= ch <= '\u06FF' or '\u0750' <= ch <= '\u077F' for ch in text)
+
+
+# ── Data Match comparison helpers ──────────────────────────────────────
+
+def _compare_id(user_input: Optional[str], ocr_value: Optional[str]) -> float:
+    """Compare user-entered ID number vs OCR-extracted using field_comparison_service."""
+    if not user_input:
+        return 1.0  # Not provided → skip
+    result = compare_exact(ocr_value, user_input)
+    return result["score"]
+
+
+def _compare_name(user_input: Optional[str], parsed_data: dict) -> float:
+    """Compare user-entered name vs matching-language OCR name.
+
+    Detects whether user input is Arabic or English script,
+    then compares only against the matching-language OCR name
+    using validate_name_match_simple (same as compare_field uses).
+    """
+    if not user_input:
+        return 1.0  # Not provided → skip
+
+    # Detect language and pick the right OCR name
+    if _is_arabic(user_input):
+        ocr_name = parsed_data.get("name_arabic")
+        language = "arabic"
+    else:
+        ocr_name = parsed_data.get("name_english")
+        language = "english"
+
+    if not ocr_name:
+        # Cross-language fallback:
+        # If user input is English but we only have Arabic OCR, try transliterating
+        if language == "english":
+            arabic_ocr = parsed_data.get("name_arabic")
+            if arabic_ocr:
+                try:
+                    ocr_name = arabic_to_latin(arabic_ocr)
+                    print(f"[NAME_MATCH] Cross-language fallback: transliterated '{arabic_ocr}' -> '{ocr_name}'")
+                except Exception as e:
+                    print(f"[NAME_MATCH] Transliteration failed: {e}")
+
+    if not ocr_name:
+        print(f"[NAME_MATCH] No OCR name for {language}")
+        return 0.0  # OCR didn't extract a name in this language
+
+    # Quick exact match after normalization
+    if _is_arabic(user_input):
+        ocr_norm = normalize_arabic_name(ocr_name)
+        user_norm = normalize_arabic_name(user_input)
+    else:
+        ocr_norm = normalize_english_name(ocr_name)
+        user_norm = normalize_english_name(user_input)
+
+    # Exact match (same text)
+    if ocr_norm == user_norm:
+        print(f"[NAME_MATCH] EXACT match: '{ocr_name}' == '{user_input}'")
+        return 1.0
+
+    # Token-set match: same words in any order (handles Arabic family-name-first vs last)
+    ocr_tokens = set(ocr_norm.split())
+    user_tokens = set(user_norm.split())
+    if ocr_tokens == user_tokens and len(ocr_tokens) > 0:
+        print(f"[NAME_MATCH] TOKEN SET match (same words, different order): '{ocr_name}' vs '{user_input}'")
+        return 1.0
+
+    # Fuzzy token-set match: handles OCR typos and transliteration variants
+    if len(ocr_tokens) > 0 and len(user_tokens) > 0:
+        # Lower threshold for English (transliteration variance is higher)
+        sim_threshold = 0.75 if language == "arabic" else 0.65
+
+        def _best_token_match(token, candidates):
+            """Find best matching token from candidates."""
+            return max(SequenceMatcher(None, token, c).ratio() for c in candidates)
+
+        # Count how many tokens from each side have a fuzzy match
+        user_matched = sum(1 for t in user_tokens if _best_token_match(t, ocr_tokens) >= sim_threshold)
+        ocr_matched = sum(1 for t in ocr_tokens if _best_token_match(t, user_tokens) >= sim_threshold)
+
+        user_ratio = user_matched / len(user_tokens)
+        ocr_ratio = ocr_matched / len(ocr_tokens)
+        avg_ratio = (user_ratio + ocr_ratio) / 2
+
+        # All tokens matched → perfect score
+        if user_ratio == 1.0 and ocr_ratio == 1.0:
+            print(f"[NAME_MATCH] FUZZY TOKEN SET match: '{ocr_name}' vs '{user_input}'")
+            return 1.0
+
+        # Most tokens matched (≥60%) → proportional high score
+        if avg_ratio >= 0.6:
+            score = 0.7 + (0.3 * avg_ratio)  # maps 0.6→0.88, 0.8→0.94, 1.0→1.0
+            print(f"[NAME_MATCH] PARTIAL TOKEN match ({user_matched}/{len(user_tokens)} user, {ocr_matched}/{len(ocr_tokens)} ocr): score={score:.4f} | '{ocr_name}' vs '{user_input}'")
+            return score
+
+    result = validate_name_match_simple(
+        ocr_name=ocr_name,
+        user_name=user_input,
+        language=language,
+        ocr_confidence=1.0,
+    )
+    print(f"[NAME_MATCH] lang={language} | ocr='{ocr_name}' | user='{user_input}' | score={result['final_score']:.4f} | details={result.get('comparison', {})}")
+    return result["final_score"]
+
+
+def _compare_date(user_input: Optional[str], ocr_value: Optional[str]) -> float:
+    """Compare dates using field_comparison_service with tolerance."""
+    if not user_input:
+        return 1.0  # Not provided → skip
+    result = compare_dates_with_tolerance(ocr_value, user_input)
+    return result["score"]
+
+
+def _compare_gender(
+    user_input: Optional[str], ocr_value: Optional[str],
+    id_number: Optional[str] = None, id_type: str = "yemen_national_id"
+) -> float:
+    """Compare gender using field_comparison_service with fraud check."""
+    if not user_input:
+        return 1.0  # Not provided → skip
+    # Normalize: OCR returns "Male"/"Female" (title case)
+    normalized_gender = user_input.strip().title()
+    result = compare_gender_with_fraud_check(
+        ocr_gender=ocr_value,
+        user_gender=normalized_gender,
+        id_number=id_number or "",
+        id_type=id_type,
+    )
+    return result["score"]
 
 @router.post("/verify", response_model=VerifyResponse)
 async def verify_identity_endpoint(
     id_card_front: UploadFile = File(..., description="ID card front side image"),
     selfie: UploadFile = File(..., description="Selfie image file"),
     id_card_back: UploadFile = File(None, description="ID card back side image (optional)"),
+    # Optional user-entered data for Data Match scoring
+    user_id_number: Optional[str] = Form(None, description="User-entered ID number"),
+    user_name: Optional[str] = Form(None, description="User-entered name (Arabic or English)"),
+    user_dob: Optional[str] = Form(None, description="User-entered date of birth (YYYY-MM-DD)"),
+    user_issuance_date: Optional[str] = Form(None, description="User-entered issuance date (YYYY-MM-DD)"),
+    user_expiry_date: Optional[str] = Form(None, description="User-entered expiry date (YYYY-MM-DD)"),
+    user_gender: Optional[str] = Form(None, description="User-entered gender (Male/Female)"),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -238,15 +388,9 @@ async def verify_identity_endpoint(
                 # Save Verification Result
                 if doc_record:
                     similarity = face_result.get("similarity_score")
-                    is_live = liveness_response.is_live if liveness_response else False
-                    
-                    # Determine status: verified only if face matches AND is live
-                    if similarity and similarity > 0.6 and is_live:
-                        status_val = "verified"
-                    else:
-                        status_val = "failed"
 
-                    # --- Calculate detailed quality and authenticity metrics ---
+                    # --- Calculate quality and authenticity metrics FIRST ---
+                    # These scores feed into the policy evaluation
 
                     # 1. Image Quality Metrics (from Quality Service)
                     id_quality = check_id_quality(id_card_front_image)
@@ -265,41 +409,108 @@ async def verify_identity_endpoint(
                         }
                     }
 
-                    # 2. Authenticity Checks (Derived from OCR + Quality + ID validation)
+                    # 2. Document Authenticity & Quality from validate_yemen_id()
                     ocr_confidence = float(front_ocr_result.get("confidence", 0.0))
                     extraction_method = front_ocr_result.get("extraction_method", "unknown")
-                    detected_langs = front_ocr_result.get("detected_languages", [])
                     
-                    # Document validation signals from quality check
-                    doc_validation = {
-                        "is_clear": id_quality.get("quality_score", 0) > 0.5,
-                        "face_detected_on_id": id_quality.get("face_visible", False),
-                        "sharpness_ok": id_quality.get("details", {}).get("sharpness", 0) > 50,
-                        "not_blurry": id_quality.get("details", {}).get("blur_score", 1) < 0.5,
+                    try:
+                        doc_val = validate_yemen_id(id_card_front_image, id_card_back_image)
+                        checks = doc_val.get("checks", {})
+                        
+                        # --- doc_authenticity (0-1): is this a real, original document? ---
+                        auth_checks = [
+                            1.0 if checks.get("official_document", {}).get("passed") else 0.0,
+                            1.0 if checks.get("not_screenshot_or_copy", {}).get("passed") else 0.0,
+                            1.0 if checks.get("original_and_genuine_front", {}).get("passed") else 0.0,
+                            1.0 if checks.get("integrity", {}).get("passed") else 0.0,
+                            1.0 if checks.get("no_extra_objects", {}).get("passed") else 0.0,
+                        ]
+                        auth_score = sum(auth_checks) / len(auth_checks)
+                        
+                        # --- doc_quality (0-1): is the image clear and usable? ---
+                        clarity = checks.get("clear_and_readable", {})
+                        visibility = checks.get("fully_visible", {})
+                        obscured = checks.get("not_obscured", {})
+                        
+                        quality_scores = [
+                            float(clarity.get("score", 0.0)) if clarity.get("score") is not None else (1.0 if clarity.get("passed") else 0.0),
+                            float(visibility.get("score", 0.0)) if visibility.get("score") is not None else (1.0 if visibility.get("passed") else 0.0),
+                            1.0 if obscured.get("passed") else 0.0,
+                        ]
+                        quality_score = sum(quality_scores) / len(quality_scores)
+                        
+                    except Exception as e:
+                        # Fallback: use old method if validation service fails
+                        import logging
+                        logging.getLogger(__name__).warning(f"validate_yemen_id failed: {e}, using fallback scores")
+                        base_score = ocr_confidence if extraction_method == "yolo" else min(ocr_confidence * 0.8, 1.0)
+                        auth_score = min(base_score + 0.1, 1.0)
+                        quality_score = id_quality.get("quality_score", 0.0)
+
+                    # 3. Front/Back ID Match (compare IDs from front and back OCR)
+                    front_back_match_score = 0.0
+                    if back_ocr_result:
+                        back_id = back_ocr_result.get("extracted_id")
+                        if extracted_id and back_id and extracted_id == back_id:
+                            front_back_match_score = 1.0
+                        elif extracted_id and back_id:
+                            front_back_match_score = 0.0  # mismatch
+                    else:
+                        # No back card provided — give full credit
+                        front_back_match_score = 1.0
+
+                    # --- Dynamic Policy Check ---
+                    # Prepare ALL scores for policy evaluation (normalized 0-1)
+                    policy_scores = {
+                        # Face & Liveness
+                        "face_match": face_result.get("similarity_score", 0.0),
+                        "liveness": liveness_response.confidence if liveness_response else 0.0,
+                        # Document Verification
+                        "ocr_confidence": ocr_confidence,
+                        "doc_quality": quality_score,
+                        "doc_authenticity": auth_score,
+                        "front_back_match": front_back_match_score,
+                        # Data Match (user-entered vs OCR-extracted)
+                        "id_number_match": _compare_id(user_id_number, extracted_id),
+                        "name_match": _compare_name(user_name, parsed_data),
+                        "dob_match": _compare_date(user_dob, parsed_data.get("date_of_birth")),
+                        "issuance_date_match": _compare_date(user_issuance_date, parsed_data.get("issuance_date")),
+                        "expiry_date_match": _compare_date(user_expiry_date, parsed_data.get("expiry_date")),
+                        "gender_match": _compare_gender(user_gender, parsed_data.get("gender"), extracted_id, id_type or "yemen_national_id"),
                     }
                     
-                    # ID number validation
-                    id_validation = {
-                        "format_valid": extracted_id is not None and len(extracted_id) >= 8,
-                        "length_correct": extracted_id is not None and len(extracted_id) == 11,  # Yemen ID is 11 digits
-                        "is_numeric": extracted_id.isdigit() if extracted_id else False,
-                    }
+                    # Evaluate against KycConfig
+                    policy_result = await VerificationPolicyService.evaluate_verification(db, policy_scores)
                     
-                    # Calculate overall authenticity score
-                    base_score = ocr_confidence if extraction_method == "yolo" else min(ocr_confidence * 0.8, 1.0)
-                    # Boost if document validation passes
-                    validation_boost = 0.1 if all(doc_validation.values()) else 0
-                    id_boost = 0.1 if all(id_validation.values()) else 0
-                    auth_score = min(base_score + validation_boost + id_boost, 1.0)
+                    # Generate Transaction ID
+                    tx_id = str(uuid.uuid4())
                     
+                    # Log to KycData
+                    await VerificationPolicyService.log_result(
+                        db, 
+                        user_id=doc_record.id,  # using document id as user reference
+                        scores=policy_scores, 
+                        result=policy_result, 
+                    )
+
+                    # Update status based on Policy decision
+                    if policy_result.decision == "APPROVED":
+                        status_val = "verified"
+                    elif policy_result.decision == "MANUAL_REVIEW":
+                        status_val = "manual_review"
+                    else:
+                        status_val = "failed"
+                    
+                    if policy_result.reasons:
+                        print(f"Policy Decision: {policy_result.decision} — {policy_result.reasons}")
+                    # --- End Dynamic Policy Check ---
+
                     auth_checks = {
                         "ocr_confidence": ocr_confidence,
                         "extraction_method": extraction_method,
                         "expected_layout_found": extraction_method == "yolo",
-                        "languages_found": detected_langs,
-                        "document_validation": doc_validation,
-                        "id_validation": id_validation,
-                        "overall_authenticity_score": auth_score
+                        "overall_authenticity_score": auth_score,
+                        "policy_result": policy_result.to_dict()
                     }
 
                     # 3. Failure Reason (Structured)

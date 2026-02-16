@@ -56,7 +56,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends build-essential
 # NOW handled at runtime in ocr_service.py to support external volumes
 
 # Create necessary directories
-RUN mkdir -p /app/data/id_cards /app/data/selfies /app/data/processed
+RUN mkdir -p /app/data/id_cards /app/data/selfies /app/data/processed /app/static
 
 # Expose port
 EXPOSE 8000
