@@ -303,15 +303,17 @@ def detect_moire_patterns(gray_image: np.ndarray) -> float:
 
 
 @log_execution_time
-def detect_spoof(image: np.ndarray) -> Dict:
+def detect_spoof(image: np.ndarray, threshold: Optional[float] = None) -> Dict:
     """
     Passive liveness detection for selfie images.
     
     Runs 6 checks to determine if a selfie is from a live person.
-    ALL checks must pass for liveness to pass (strict mode).
     
     Args:
         image: Input selfie image (BGR format)
+        threshold: Optional confidence threshold (0.0-1.0).
+                   If provided, is_live = confidence >= threshold.
+                   If None, uses STRICT MODE (all checks must pass).
         
     Returns:
         Dictionary containing:
@@ -450,9 +452,8 @@ def detect_spoof(image: np.ndarray) -> Dict:
             }
         
         # ========================================
-        # STRICT MODE: ALL checks must pass
+        # DECISION LOGIC
         # ========================================
-        # Instead of weighted voting, require ALL checks to pass
         
         # Collect all check results (excluding ML model as optional)
         core_checks = [
@@ -466,20 +467,19 @@ def detect_spoof(image: np.ndarray) -> Dict:
         # Check if ML model check exists and passed
         ml_passed = checks.get("ml_model", {}).get("passed", True)  # Default to True if not available
         
-        # Count passed checks
-        passed_count = sum(1 for _, passed in core_checks if passed)
-        total_core = len(core_checks)
-        
-        # ALL core checks must pass
-        all_core_passed = all(passed for _, passed in core_checks)
-        
-        # Final decision: all core checks + ML must pass
-        is_live = all_core_passed and ml_passed
-        
         # Calculate confidence based on passed ratio
-        total_checks = total_core + (1 if "ml_model" in checks else 0)
+        passed_count = sum(1 for _, passed in core_checks if passed)
+        total_checks = len(core_checks) + (1 if "ml_model" in checks else 0)
         passed_total = passed_count + (1 if ml_passed else 0)
         confidence = passed_total / total_checks if total_checks > 0 else 0.0
+        
+        if threshold is not None:
+             # DYNAMIC MODE: Confidence must meet threshold
+             is_live = confidence >= threshold
+        else:
+             # STRICT MODE: ALL checks must pass
+             all_core_passed = all(passed for _, passed in core_checks)
+             is_live = all_core_passed and ml_passed
         
         # If not live, add error message listing failed checks
         if not is_live:
